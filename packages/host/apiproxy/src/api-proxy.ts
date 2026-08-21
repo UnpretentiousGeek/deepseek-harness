@@ -14,7 +14,7 @@ import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatu
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, freezeMessage, ReasoningEffortId, boundContextSummary } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
@@ -2696,6 +2696,66 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }))
         }
         return Promise.resolve(ok(request, { accepted: true as const }))
+      },
+    },
+
+    // The web surface's single job write. Authorization is the registry's own
+    // fence read through this session's visibility: the caller resolves to the
+    // exact live owner agent when the session is attached, and to no caller
+    // when it is not (which reaches unowned jobs only, exactly like list()).
+    jobs: {
+      kill(request) {
+        const { sessionId, jobId, reason } = request.payload
+        const jobs = ctx.get('jobs')
+        if (jobs === undefined) {
+          return Promise.resolve(err(request, {
+            code: 'jobs-unavailable',
+            message: 'background jobs are not available in this host',
+            details: { sessionId },
+          }))
+        }
+        const agent = ctx.agents.get(sessionId)
+        const visible = jobs.list(agent).find(job => job.id === jobId)
+        if (visible === undefined) {
+          return Promise.resolve(err(request, {
+            code: 'job-not-found',
+            message: `no background job "${jobId}" is visible from this session`,
+            details: { jobId },
+          }))
+        }
+        let outcome: 'requested' | 'already-finished'
+        try {
+          outcome = jobs.kill(jobId, agent, reason ?? 'stopped by the user from the web interface')
+        } catch (error: unknown) {
+          return Promise.resolve(err(request, {
+            code: 'job-kill-failed',
+            message: error instanceof Error ? error.message : String(error),
+            details: { jobId },
+          }))
+        }
+        // kill() marks the record reported, which suppresses the owner's
+        // tool-jobs completion notice — the model would believe its job still
+        // runs. Inject the account instead: claimed at the next step boundary
+        // of a busy driver, parked for an idle one (never a wake; a human
+        // click opens no turn). Only an owned job has a reader to tell.
+        if (outcome === 'requested' && agent !== undefined && visible.ownerSession !== undefined) {
+          agent.inject(createUserMessage({
+            content: [{
+              type: 'text',
+              text: `background job ${visible.id} (${visible.kind}: ${visible.label}) was stopped by the user. `
+                + 'It is no longer running; do not wait for it, read its output, or duplicate its work.',
+            }],
+            source: {
+              kind: 'plugin',
+              plugin: 'web-jobs',
+              form: 'notice',
+              summary: boundContextSummary(`${visible.kind} ${visible.label} stopped by the user`),
+            },
+          }))
+        }
+        return Promise.resolve(ok(request, {
+          outcome: outcome === 'already-finished' ? 'already-finished' as const : 'cancellation-requested' as const,
+        }))
       },
     },
 

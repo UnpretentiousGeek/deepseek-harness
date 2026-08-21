@@ -1,17 +1,32 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import type { JobView } from '@deepseek-ai/dsh-client-runtime/client'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import type { JobView, JobKillReceipt, RpcResult } from '@deepseek-ai/dsh-client-runtime/client'
 import { IconChevronDownOutline14, StateDot, useDismissOnOutsidePointer, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './locales.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import css from './JobListAction.module.css'
 
+/** Business face this plugin injects beside the framework session kit. */
+export interface JobListInjected {
+  /**
+   * Kill one background job under this session's visibility. The promise
+   * settles with the admitted cancel request; the row's own transition to
+   * `stopping`/`killed` arrives through the `jobsBySession` mirror.
+   */
+  killJob: (jobId: string, reason?: string) => Promise<RpcResult<JobKillReceipt>>
+}
+
 /** Full props for the session-header background-job action. */
 export type JobListActionProps =
-  PropsRuntime<'conversation.session.header.actions'> & PropsLocale<typeof NS>
+  PropsRuntime<'conversation.session.header.actions'> & JobListInjected & PropsLocale<typeof NS>
 
 /** Stable empty list so a session with no jobs keeps one array identity. */
 const NO_TASKS: readonly JobView[] = []
+
+/** A stop click must not steal focus from the popover's keyboard flow. */
+function keepFocus(e: MouseEvent<HTMLButtonElement>): void {
+  e.preventDefault()
+}
 
 /** A job the registry still holds open, and whose duration therefore ticks. */
 function isLive(job: JobView): boolean {
@@ -88,13 +103,17 @@ function ordered(jobs: readonly JobView[]): JobView[] {
  * Session-header entry point for this session's background jobs. It renders
  * nothing at all until the session has at least one job, so an ordinary
  * conversation never grows a control for a capability it is not using.
- * @param props - runtime slot currency plus the namespace translator.
+ * Live rows carry a stop control: the kill request is fire-and-return, and
+ * the row's own `stopping` → terminal transition arrives through the mirror.
+ * @param props - runtime slot currency, the injected kill face, and the namespace translator.
  * @returns the trigger and its popover list, or null when there is nothing to show.
  */
-export function JobListAction({ sessionId, useSessions, t }: JobListActionProps) {
+export function JobListAction({ sessionId, useSessions, killJob, t }: JobListActionProps) {
   const jobs = useSessions(state => state.jobsBySession[sessionId]) ?? NO_TASKS
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [killing, setKilling] = useState<string | undefined>(undefined)
+  const [killError, setKillError] = useState<{ jobId: string; message: string } | undefined>(undefined)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -131,6 +150,20 @@ export function JobListAction({ sessionId, useSessions, t }: JobListActionProps)
     triggerRef.current?.focus()
   }
 
+  const stop = (jobId: string): void => {
+    if (killing !== undefined) return
+    setKilling(jobId)
+    setKillError(undefined)
+    void killJob(jobId, 'stopped by the user from the web interface')
+      .then((result) => {
+        // A successful request needs no local record — the registry's change
+        // push flips the row to `stopping` and then its terminal status. A
+        // failure stays legible on the row until the next attempt or push.
+        if (!result.ok) setKillError({ jobId, message: result.error.message })
+      })
+      .finally(() => { setKilling(current => current === jobId ? undefined : current) })
+  }
+
   return (
     <div ref={rootRef} className={css.root} onKeyDown={onKeyDown}>
       <button
@@ -159,19 +192,41 @@ export function JobListAction({ sessionId, useSessions, t }: JobListActionProps)
               const live = isLive(job)
               const elapsed = live ? now - job.startedAt : (job.finishedAt ?? job.startedAt) - job.startedAt
               const duration = formatDuration(elapsed, t)
-              const status = statusLabel(job.status, t)
+              const failed = killError?.jobId === job.id && live
+              // The producer's detail replaces the generic word once present;
+              // a failed stop request displaces both until the next attempt
+              // or registry push, with the raw error in the tooltip.
+              const status = failed
+                ? t('kill.failed')
+                : (job.detail ?? statusLabel(job.status, t))
+              const statusTitle = failed ? killError.message : status
               return (
                 <li key={job.id} className={live ? css.row : `${css.row} ${css.rowSettled}`}>
-                  <StateDot state={dotState(job.status)} className={css.rowDot} />
+                  <StateDot state={failed ? 'error' : dotState(job.status)} className={css.rowDot} />
                   <span className={css.kind}>{job.kind}</span>
                   <span className={css.label} title={job.label}>{job.label}</span>
-                  <span className={css.status} title={job.detail ?? status}>{job.detail ?? status}</span>
+                  <span className={css.status} title={statusTitle}>{status}</span>
                   <span
                     className={css.duration}
                     title={t(live ? 'duration.title.live' : 'duration.title.done', { duration })}
                   >
                     {duration}
                   </span>
+                  {job.status === 'running' && (
+                    <button
+                      type="button"
+                      className={css.kill}
+                      aria-label={t('kill.aria', { label: job.label })}
+                      title={t('kill.aria', { label: job.label })}
+                      disabled={killing !== undefined}
+                      onMouseDown={keepFocus}
+                      onClick={() => { stop(job.id) }}
+                    >
+                      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden>
+                        <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
+                      </svg>
+                    </button>
+                  )}
                 </li>
               )
             })}

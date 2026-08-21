@@ -185,7 +185,7 @@ export class TestSessions implements ISessions {
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
     method: 'open' | 'openSubagent' | 'setSubagentCatalogOpen' | 'refreshSubagents'
-      | 'clear' | 'search' | 'fork'
+      | 'clear' | 'search' | 'fork' | 'killJob'
     args: unknown[]
   }[] = []
 
@@ -438,6 +438,12 @@ export class TestSessions implements ISessions {
   refreshSubagents(parentSessionId: SessionId): Promise<void> {
     this.calls.push({ method: 'refreshSubagents', args: [parentSessionId] })
     return Promise.resolve()
+  }
+
+  /** Record a job kill; the default answers a requested cancellation. */
+  killJob(sessionId: SessionId, jobId: string, reason?: string): ReturnType<ISessions['killJob']> {
+    this.calls.push({ method: 'killJob', args: [sessionId, jobId, reason] })
+    return Promise.resolve({ ok: true, value: { outcome: 'cancellation-requested' } })
   }
 
   /** Apply a confirmed preset switch into the fixture list, as production does. */

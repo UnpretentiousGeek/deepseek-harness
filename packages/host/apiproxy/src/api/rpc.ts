@@ -92,6 +92,12 @@ export interface RpcErrorDetailsMap {
   'subagent-not-resumable': { childSessionId: SessionId }
   'subagent-unauthorized': { childSessionId: SessionId }
   'subagent-delivery-unavailable': { childSessionId: SessionId }
+  /** The host composition carries no `ctx.jobs` provider, so no job surface exists. */
+  'jobs-unavailable': { sessionId: SessionId }
+  /** No job with this id is visible from the requesting session (unknown or foreign). */
+  'job-not-found': { jobId: string }
+  /** The registry's producer-facing cancel threw; job state is unchanged. */
+  'job-kill-failed': { jobId: string }
   'internal': {}
 }
 

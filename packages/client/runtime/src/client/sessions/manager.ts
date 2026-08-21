@@ -4,7 +4,7 @@
 
 import type {
   IApiClient, HostFrame, MuxFrame, RpcError, RpcRequest, RpcResult, SessionId,
-  SessionSummary, SubagentAddress, SubagentCatalog, JobView, WorkspaceId,
+  SessionSummary, SubagentAddress, SubagentCatalog, JobView, JobKillReceipt, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -521,6 +521,27 @@ export class SessionManager {
   ): Promise<RpcResult<{ items: SessionSearchResultItem[]; hasMore: boolean }>> {
     try {
       return (await this.api.sessions.search({ query }, signal)).result
+    } catch (error: unknown) {
+      return transportError(error)
+    }
+  }
+
+  /**
+   * Kill one background job under the issuing session's visibility. The
+   * receipt acknowledges the admitted cancel signal; the row's `stopping` →
+   * terminal transition arrives through the ordinary `session/jobs` pushes.
+   * @param sessionId - session whose job panel issued the kill.
+   * @param jobId - registry-issued `<kind>-N` id.
+   * @param reason - optional logged reason forwarded to the producer.
+   * @returns the kill outcome or a folded transport error.
+   */
+  async killJob(sessionId: SessionId, jobId: string, reason?: string): Promise<RpcResult<JobKillReceipt>> {
+    try {
+      return (await this.api.jobs.kill({
+        sessionId,
+        jobId: jobId as JobView['id'],
+        ...(reason === undefined ? {} : { reason }),
+      })).result
     } catch (error: unknown) {
       return transportError(error)
     }

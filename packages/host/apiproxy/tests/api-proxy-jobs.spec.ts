@@ -7,7 +7,7 @@
  * resumes a cold session.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -44,7 +44,13 @@ function producer(label = 'sleep 60') {
   return { spec, reads, settle: (outcome: JobOutcome) => { settle(outcome) } }
 }
 
-async function harness(withRegistry: boolean): Promise<{ ctx: Context; session: Session; agent: Agent }> {
+async function harness(withRegistry: boolean): Promise<{
+  ctx: Context
+  session: Session
+  agent: Agent
+  /** The owner agent's injected-notice spy (the model-facing stop account). */
+  inject: ReturnType<typeof vi.fn>
+}> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(UserQuestionService)
@@ -54,15 +60,17 @@ async function harness(withRegistry: boolean): Promise<{ ctx: Context; session: 
     ctx.jobs.attachController('api-proxy-test')
   }
   const session = ctx.sessions.create()
+  const inject = vi.fn()
   const agent = {
     id: session.id,
     session,
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
+    inject,
     ctx,
-  } as Agent
+  } as unknown as Agent
   ctx.agents.register(agent)
-  return { ctx, session, agent }
+  return { ctx, session, agent, inject }
 }
 
 const api = (ctx: Context) => createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
@@ -259,5 +267,101 @@ describe('session/jobs baseline for a session born after the stream opened', () 
     const frames = await collect(stream, 2, abort)
     const forNew = frames.filter(frame => frame.sessionId === created.id)
     expect(forNew.at(-1)?.jobs[0]?.label).toBe('visible to every caller')
+  })
+})
+
+describe('jobs.kill RPC', () => {
+  // One ApiProxy per context: createApiProxy registers host-side providers,
+  // so a second construction over the same context would collide.
+  const proxies = new WeakMap<Context, ReturnType<typeof api>>()
+  const proxyFor = (ctx: Context): ReturnType<typeof api> => {
+    let proxy = proxies.get(ctx)
+    if (proxy === undefined) proxies.set(ctx, proxy = api(ctx))
+    return proxy
+  }
+  const kill = (ctx: Context, sessionId: string, jobId: string) =>
+    proxyFor(ctx).jobs.kill({ rpcId: RpcId('t-jobs-kill'), payload: { sessionId: sessionId as never, jobId: jobId as never } })
+
+  it('requests cancellation of an owned live job and reports the outcome', async () => {
+    const { ctx, session, agent } = await harness(true)
+    const p = producer()
+    const id = ctx.jobs.start({ ...p.spec, owner: agent })
+
+    const response = await kill(ctx, session.id, id)
+    expect(response.result).toEqual({ ok: true, value: { outcome: 'cancellation-requested' } })
+    // The registry moved to `stopping`; the producer owns the terminal settle.
+    expect(ctx.jobs.get(id, agent).status).toBe('stopping')
+    // The wire mirror hears the transition through the ordinary change push.
+  })
+
+  it('injects a model-facing stop notice into the live owner', async () => {
+    const { ctx, session, agent, inject } = await harness(true)
+    const id = ctx.jobs.start({ ...producer('pnpm test').spec, owner: agent })
+
+    await kill(ctx, session.id, id)
+    expect(inject).toHaveBeenCalledTimes(1)
+    const message = inject.mock.calls[0]?.[0] as {
+      content: { type: string; text: string }[]
+      source: { kind: string; plugin: string; form: string }
+    }
+    expect(message.content[0]?.text).toContain('bash-1')
+    expect(message.content[0]?.text).toContain('stopped by the user')
+    expect(message.source).toMatchObject({ kind: 'plugin', plugin: 'web-jobs', form: 'notice' })
+  })
+
+  it('answers already-finished for a settled job without injecting', async () => {
+    const { ctx, session, agent, inject } = await harness(true)
+    const p = producer()
+    const id = ctx.jobs.start({ ...p.spec, owner: agent })
+    ctx.jobs.kill(id, agent, 'test')
+    p.settle({ status: 'killed' })
+    // The registry settles through the producer's done continuation; let the
+    // microtask land so the RPC reads the terminal record.
+    await Promise.resolve()
+
+    const response = await kill(ctx, session.id, id)
+    expect(response.result).toEqual({ ok: true, value: { outcome: 'already-finished' } })
+    expect(inject).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unknown or foreign job with job-not-found', async () => {
+    const { ctx, session, agent } = await harness(true)
+    const other = ctx.sessions.create()
+    const otherAgent = {
+      id: other.id,
+      session: other,
+      inbox: new Inbox(other, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+      status: 'idle',
+      inject: vi.fn(),
+      ctx,
+    } as unknown as Agent
+    ctx.agents.register(otherAgent)
+    const id = ctx.jobs.start({ ...producer().spec, owner: agent })
+
+    const unknownJob = await kill(ctx, session.id, 'bash-99')
+    expect(unknownJob.result.ok).toBe(false)
+    const foreign = await kill(ctx, other.id, id)
+    expect(foreign.result.ok).toBe(false)
+    // Both denials share one code: the requester learns only "not visible".
+    if (!unknownJob.result.ok) expect(unknownJob.result.error.code).toBe('job-not-found')
+    if (!foreign.result.ok) expect(foreign.result.error.code).toBe('job-not-found')
+    expect(ctx.jobs.get(id, agent).status).toBe('running')
+  })
+
+  it('serves an unowned job for a cold session without resuming it', async () => {
+    const { ctx } = await harness(true)
+    const cold = ctx.sessions.create()
+    const id = ctx.jobs.start(producer().spec)
+
+    const response = await kill(ctx, cold.id, id)
+    expect(response.result).toEqual({ ok: true, value: { outcome: 'cancellation-requested' } })
+    expect(ctx.agents.get(cold.id)).toBeUndefined()
+  })
+
+  it('reports jobs-unavailable when the composition carries no registry', async () => {
+    const { ctx, session } = await harness(false)
+    const response = await kill(ctx, session.id, 'bash-1')
+    expect(response.result.ok).toBe(false)
+    if (!response.result.ok) expect(response.result.error.code).toBe('jobs-unavailable')
   })
 })

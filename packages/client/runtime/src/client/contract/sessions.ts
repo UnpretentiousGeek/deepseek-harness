@@ -9,7 +9,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  RpcResult, SessionId, SubagentAddress,
+  JobKillReceipt, RpcResult, SessionId, SubagentAddress,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { HostObservable, SessionMaybeProvideInfo } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AgentContext } from '../agents/scope.ts'
@@ -62,6 +62,18 @@ export interface ISessions {
    * @returns completion of the current or newly started refresh.
    */
   refreshSubagents(parentSessionId: SessionId): Promise<void>
+
+  /**
+   * Kill one background job under the session's own visibility — owned jobs
+   * through their exact owner agent, unowned jobs open to every caller. The
+   * receipt acknowledges the admitted cancel signal; the row settles as
+   * `killed` through the ordinary `session/jobs` pushes.
+   * @param sessionId - the session whose job panel issued the kill.
+   * @param jobId - registry-issued `<kind>-N` id.
+   * @param reason - optional logged reason forwarded to the producer.
+   * @returns the kill outcome, or a business/transport error.
+   */
+  killJob(sessionId: SessionId, jobId: string, reason?: string): Promise<RpcResult<JobKillReceipt>>
 
   /**
    * Record the composition one session now runs. The agent-preset seat calls

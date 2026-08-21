@@ -1,11 +1,13 @@
 /**
- * tasks domain zod schemas: the branded job id and the wire view carried by
- * `session/jobs` frames.
+ * tasks domain zod schemas: the branded job id, the wire view carried by
+ * `session/jobs` frames, and the human-kill request/value pair.
  */
 
 import { z } from 'zod'
 import type { JobId } from '@deepseek-ai/dsh-jobs/brand'
 import type { JobView } from './jobs.ts'
+import { sessionIdSchema } from './sessions.schema.ts'
+import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
 
 /** JobId: one brand cast after non-empty string validation. */
@@ -31,3 +33,15 @@ export const taskViewSchema = z.object({
   startedAt: z.number().int().nonnegative(),
   finishedAt: z.number().int().nonnegative().optional(),
 }) satisfies z.ZodType<Wire<JobView>>
+
+/** jobs.kill request payload. */
+export const jobKillRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  jobId: taskIdSchema,
+  reason: z.string().optional(),
+}) satisfies z.ZodType<Wire<RequestPayload<'jobs.kill'>>>
+
+/** jobs.kill response value. */
+export const jobKillValueSchema = z.object({
+  outcome: z.union([z.literal('cancellation-requested'), z.literal('already-finished')]),
+}) satisfies z.ZodType<Wire<ResponseValue<'jobs.kill'>>>

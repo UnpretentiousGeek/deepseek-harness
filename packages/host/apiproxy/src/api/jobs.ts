@@ -1,10 +1,13 @@
 /**
  * Browser-safe background-job domain contract. The registry's live records
  * never cross the wire; a view is the subset a human list needs, minted fresh
- * per push.
+ * per push. The one write the web surface exposes is a human-initiated kill of
+ * a job the requesting session can see.
  */
 
 import type { JobId } from '@deepseek-ai/dsh-jobs/brand'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { RpcRequest, RpcResponse } from './rpc.ts'
 
 /**
  * One background job as the client sees it.
@@ -33,4 +36,27 @@ export interface JobView {
   startedAt: number
   /** Epoch ms when the task settled; absent while live. */
   finishedAt?: number
+}
+
+/** Uniform acknowledgement that one human-initiated kill was admitted. */
+export interface JobKillReceipt {
+  /** `requested` for live work the registry asked to stop; `already-finished` otherwise. */
+  outcome: 'cancellation-requested' | 'already-finished'
+}
+
+/** Background-job-domain unary methods (the web surface's single write). */
+export interface JobsApi {
+  /**
+   * Requests cancellation of one job visible from `sessionId` — owned jobs
+   * through their exact owner agent, unowned jobs open to every caller, per
+   * the registry's own fence. Fire-and-return: the receipt acknowledges the
+   * admitted cancel signal, not producer quiescence; the row settles as
+   * `killed` through the ordinary change pushes. A live owner is told about a
+   * requested stop through an injected model-facing notice, because the kill
+   * marks the record reported and would otherwise suppress its completion
+   * notice.
+   */
+  kill(
+    request: RpcRequest<{ sessionId: SessionId; jobId: JobId; reason?: string }>,
+  ): Promise<RpcResponse<JobKillReceipt>>
 }

@@ -33,7 +33,12 @@ function job(over: Partial<JobView> = {}): JobView {
   }
 }
 
-function props(jobs: readonly JobView[] | undefined): JobListActionProps {
+/** Default injected kill face: records the call and answers a requested cancellation. */
+function killJobMock(): JobListActionProps['killJob'] {
+  return vi.fn(() => Promise.resolve({ ok: true as const, value: { outcome: 'cancellation-requested' as const } }))
+}
+
+function props(jobs: readonly JobView[] | undefined, killJob: JobListActionProps['killJob'] = killJobMock()): JobListActionProps {
   const state = {
     ids: [SESSION],
     byId: {},
@@ -46,7 +51,7 @@ function props(jobs: readonly JobView[] | undefined): JobListActionProps {
   function useSessions<T>(select: (snapshot: SessionListState) => T): T {
     return select(state)
   }
-  return { sessionId: SESSION, useSessions, t } as unknown as JobListActionProps
+  return { sessionId: SESSION, useSessions, killJob, t } as unknown as JobListActionProps
 }
 
 /**
@@ -235,5 +240,76 @@ describe('JobListAction wire tolerance', () => {
     ])} />)
     fireEvent.click(screen.getByRole('button'))
     expect(rowCells().map(cells => cells[1])).toEqual(['later', 'earlier'])
+  })
+})
+
+describe('JobListAction stop control', () => {
+  const stopButton = (label: string): HTMLElement =>
+    within(screen.getByRole('list', { name: zh['list.aria'] })).getByRole('button', { name: label })
+
+  it('offers a stop control on running rows only, named by the job label', () => {
+    render(<JobListAction {...props([
+      job({ id: 'bash-1' as JobView['id'], label: 'live one' }),
+      job({ id: 'bash-2' as JobView['id'], label: 'stopping one', status: 'stopping' }),
+      job({ id: 'bash-3' as JobView['id'], label: 'done one', status: 'completed', finishedAt: START }),
+    ])} />)
+    fireEvent.click(screen.getByRole('button'))
+    expect(stopButton(zh['kill.aria'].replace('{label}', 'live one'))).toBeDefined()
+    expect(screen.queryByRole('button', { name: zh['kill.aria'].replace('{label}', 'stopping one') })).toBeNull()
+    expect(screen.queryByRole('button', { name: zh['kill.aria'].replace('{label}', 'done one') })).toBeNull()
+  })
+
+  it('kills through the injected face with the session reason and waits for the mirror', async () => {
+    const killJob = killJobMock()
+    render(<JobListAction {...props([job({ id: 'bash-1' as JobView['id'], label: 'live one' })], killJob)} />)
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(stopButton(zh['kill.aria'].replace('{label}', 'live one')))
+    expect(killJob).toHaveBeenCalledWith('bash-1', 'stopped by the user from the web interface')
+    await act(async () => { await Promise.resolve() })
+    // The row itself never flips locally: the `stopping` transition arrives
+    // through the jobsBySession push, so a still-running row keeps its button.
+    expect(stopButton(zh['kill.aria'].replace('{label}', 'live one'))).toBeDefined()
+  })
+
+  it('disables every stop control while one kill request is in flight', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const killJob: JobListActionProps['killJob'] = vi.fn(() => gate.then(() => ({ ok: true as const, value: { outcome: 'cancellation-requested' as const } })))
+    render(<JobListAction {...props([
+      job({ id: 'bash-1' as JobView['id'], label: 'first' }),
+      job({ id: 'bash-2' as JobView['id'], label: 'second' }),
+    ], killJob)} />)
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(stopButton(zh['kill.aria'].replace('{label}', 'first')))
+    expect((stopButton(zh['kill.aria'].replace('{label}', 'first')) as HTMLButtonElement).disabled).toBe(true)
+    expect((stopButton(zh['kill.aria'].replace('{label}', 'second')) as HTMLButtonElement).disabled).toBe(true)
+    release()
+    await act(async () => { await gate })
+    expect((stopButton(zh['kill.aria'].replace('{label}', 'second')) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('marks a failed kill on the row until the next attempt or push', async () => {
+    const killJob: JobListActionProps['killJob'] = vi.fn(() =>
+      Promise.resolve({ ok: false as const, error: { code: 'job-kill-failed' as const, message: 'cancel threw', details: { jobId: 'bash-1' } } }))
+    render(<JobListAction {...props([job({ id: 'bash-1' as JobView['id'], label: 'stuck' })], killJob)} />)
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(stopButton(zh['kill.aria'].replace('{label}', 'stuck')))
+    await act(async () => { await Promise.resolve() })
+    expect(within(screen.getByRole('list', { name: zh['list.aria'] })).getByText(zh['kill.failed'])).toBeDefined()
+  })
+
+  it('keeps the failure marker off rows the failure does not belong to', async () => {
+    const killJob: JobListActionProps['killJob'] = vi.fn(() =>
+      Promise.resolve({ ok: false as const, error: { code: 'job-not-found' as const, message: 'gone', details: { jobId: 'bash-1' } } }))
+    render(<JobListAction {...props([
+      job({ id: 'bash-1' as JobView['id'], label: 'gone' }),
+      job({ id: 'bash-2' as JobView['id'], label: 'healthy' }),
+    ], killJob)} />)
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(stopButton(zh['kill.aria'].replace('{label}', 'gone')))
+    await act(async () => { await Promise.resolve() })
+    const list = within(screen.getByRole('list', { name: zh['list.aria'] }))
+    expect(list.getByText(zh['kill.failed'])).toBeDefined()
+    expect(list.getByText(zh['status.running'])).toBeDefined()
   })
 })

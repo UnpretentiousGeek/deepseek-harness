@@ -141,6 +141,12 @@ export class FakeApiClient implements IApiClient {
     }))),
   }
 
+  readonly jobs: IApiClient['jobs'] = {
+    kill: (payload: unknown) => this.record('jobs.kill', payload, Promise.resolve(ok({
+      outcome: 'cancellation-requested' as const,
+    }))),
+  }
+
   readonly host: IApiClient['host'] = {
     describe: payload => this.record('host.describe', payload, this.onDescribe(payload)),
     pickDirectory: payload => this.record('host.pickDirectory', payload, this.onPickDirectory(payload)),

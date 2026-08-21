@@ -16,7 +16,7 @@
  */
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type {
-  IApiClient, RpcError, RpcResult, SessionId, SubagentAddress, JobView, WorkspaceId,
+  IApiClient, RpcError, RpcResult, SessionId, SubagentAddress, JobView, JobKillReceipt, WorkspaceId,
 } from '@deepseek-ai/dsh-api-remotes/client'
 // Value import from the inline-safe wire layer (not the connection plugin):
 // plugin-to-plugin value imports are a bundle purity error.
@@ -406,6 +406,16 @@ export class SessionRuntime implements ISessions {
    */
   refreshSubagents(parentSessionId: SessionId): Promise<void> {
     return this.manager.refreshSubagents(parentSessionId)
+  }
+
+  /**
+   * Kill one background job under the issuing session's visibility.
+   * @param sessionId - session whose job panel issued the kill.
+   * @param jobId - registry-issued `<kind>-N` id.
+   * @param reason - optional logged reason forwarded to the producer.
+   */
+  killJob(sessionId: SessionId, jobId: string, reason?: string): Promise<RpcResult<JobKillReceipt>> {
+    return this.manager.killJob(sessionId, jobId, reason)
   }
 
   noteAgentPreset(sessionId: SessionId, agentPreset: string): void {

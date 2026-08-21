@@ -70,6 +70,9 @@ function scriptedApi(overrides: {
       interrupt: r => ok(r, { accepted: true as const }),
       ...overrides.subagents,
     },
+    jobs: {
+      kill: r => ok(r, { outcome: 'cancellation-requested' as const }),
+    },
     host: {
       describe: r => ok(r, {
         version: '0-test', cwd: '/t', attachedSessions: 0, home: '/h', canOpenPath: true,
