@@ -1,0 +1,4 @@
+interface:
+  display_name: "Go"
+  short_description: "Create a branch and begin implementation"
+  default_prompt: "Use $go to create a branch and start implementing the agreed change."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Done"
+  short_description: "Commit, merge, and delete a feature branch"
+  default_prompt: "Use $done to commit this work, merge it into master, and delete the feature branch."
