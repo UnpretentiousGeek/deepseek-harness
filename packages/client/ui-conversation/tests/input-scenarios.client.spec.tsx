@@ -151,10 +151,10 @@ async function scopedBench(register?: (inputTriggers: InputTriggerService) => vo
     useInput: bindSnapshotSelector(shell.state),
     inputActions: shell.actions,
     keyboard: shell,
-    addImages: () => null,
-    removeImage: () => {},
+    addAttachments: () => null,
+    removeAttachment: () => {},
     // Every id resolves so the bar's registry prune never drops a test image.
-    draftImages: ids => ids.map(id => ({
+    draftAttachments: ids => ids.map(id => ({
       kind: 'image' as const, id,
       file: new File([Uint8Array.of(1)], `${id}.png`, { type: 'image/png' }),
       previewUrl: `blob:${id}`,
@@ -271,7 +271,7 @@ describe('scenario D: execute-kind /compact', () => {
 describe('scenario: images ride an accepting command through the real pipeline', () => {
   it('adjudication reports the image count; the claim chain serializes, submits, and consumes', async () => {
     const b = await bench()
-    act(() => { b.shell.addImages(['img-1' as DraftAttachmentId]) })
+    act(() => { b.shell.addAttachments(['img-1' as DraftAttachmentId]) })
     act(() => { b.shell.setDraft('/vision 这张图是什么') })
     fireEvent.keyDown(b.textarea, { key: 'Enter' })
     await vi.waitFor(() => { expect(b.execute).toHaveBeenCalledWith('/vision 这张图是什么', [PNG]) })
@@ -280,7 +280,7 @@ describe('scenario: images ride an accepting command through the real pipeline',
     expect(b.serialize).toHaveBeenCalledWith(['img-1'])
     await vi.waitFor(() => { expect(b.textarea.value).toBe('') })
     expect(b.release).toHaveBeenCalledWith(['img-1'])
-    expect(b.shell.snapshot.imageIds).toEqual([])
+    expect(b.shell.snapshot.attachmentIds).toEqual([])
     expect(b.sink).not.toHaveBeenCalled()
   })
 

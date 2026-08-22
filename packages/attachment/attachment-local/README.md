@@ -22,8 +22,8 @@ Normalization and request projection are deterministic. An unchanged attachment 
 
 ## Known Limitations and Deferred Work
 
+- Version one accepts PNG, JPEG, WebP, and GIF images only.
 - Objects are retained indefinitely; reference-aware garbage collection is deferred.
 - The local backend assumes the host and provider adapter share this filesystem service.
 - Animated GIF sources keep only their first frame; animation is outside the version-one image contract.
-- Document extraction reads embedded text layers only; scanned PDFs need OCR, which this backend does not provide.
-- The normalization and request encoders are pinned by the installed sharp/libvips build; an encoder or transform-version upgrade re-addresses future normalized attachments or request variants while existing objects stay valid.
+- Document extraction reads embedded text layers for the listed formats; legacy binary formats (.doc, .xls, .ppt) and scanned PDFs are refused or fail loudly.

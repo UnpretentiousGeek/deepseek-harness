@@ -59,7 +59,7 @@ interface ImageAttachmentLimits {
 本地后端每条消息最多准入 20 张图片，源图编码数据总量不超过 200 MiB。单张源图不得超过 20 MiB、64,000,000 像素和单边 8192 像素。这些源文件限制先于独立的规范化阶段执行；该阶段默认把长边限制为 2048 像素，把编码数据限制为 4 MiB。
 
 ```ts type-equiv
-/** 文本提取路径接受的文档格式。 */
+/** Document formats accepted by the text-extraction path. */
 type DocumentMediaType =
   | 'text/plain'
   | 'text/markdown'
@@ -71,7 +71,7 @@ type DocumentMediaType =
 ```
 
 ```ts type-equiv
-/** 部署解析的文档上传准入限额。 */
+/** Deployment-resolved limits used by document upload admission. */
 interface DocumentAttachmentLimits {
   maxDocumentBytes: number
   maxDocumentsPerMessage: number
@@ -82,7 +82,7 @@ interface DocumentAttachmentLimits {
 ```
 
 ```ts type-equiv
-/** 上传文档的校验与文本提取请求。 */
+/** Request to validate and extract text from one uploaded document. */
 interface SubmitDocumentAttachment {
   data: Uint8Array
   mediaType: DocumentMediaType
@@ -91,7 +91,7 @@ interface SubmitDocumentAttachment {
 ```
 
 ```ts type-equiv
-/** 按输入顺序给出的已准入文档文本提取结果。 */
+/** Extracted text projection of one admitted document, in input order. */
 interface ExtractedDocument {
   mediaType: DocumentMediaType
   name?: string

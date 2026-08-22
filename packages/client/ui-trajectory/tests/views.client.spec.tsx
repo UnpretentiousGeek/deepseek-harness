@@ -225,7 +225,7 @@ function mount(slots: SlotRegistry, nodes: ConversationSnapshot['nodes'] = NODES
     version: () => slots.getVersion('conversation.view'),
   }
   const useInput = bindSnapshotSelector(createSnapshotStore({
-    draft: '', imageIds: [], draftRev: 0, phase: 'plain', occurrences: [], queue: [],
+    draft: '', attachmentIds: [], draftRev: 0, phase: 'plain', occurrences: [], queue: [],
   })) as never
   const inputActions = {
     setDraft: vi.fn(), addAttachments: vi.fn(), removeAttachment: vi.fn(), pruneAttachments: vi.fn(), submit: vi.fn(),
