@@ -10,7 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ChangeEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconPlusOutline16, IconWarningOutline16, Toast, Tooltip,
+  IconPaperclipOutline16, IconPlusOutline16, IconWarningOutline16, Toast, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: the `plan` projection key merge (the TodoDock posture — the
 // composer reads a host-computed value; the domain owns the key).
@@ -536,6 +536,21 @@ export function InputBar({
 
   const canAcceptDrop = !locked && !machineBusy && addImages !== undefined
 
+  // The file-picker face of the same intake the paste and drop paths use. The
+  // accept hint comes from the projected intake limits; the fallback repeats
+  // the host's image media-type set for a composer whose limits frame has not
+  // arrived yet — authoritative rejection stays with addImages either way.
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const pickerAccept = imageLimits === undefined
+    ? 'image/png,image/jpeg,image/webp,image/gif'
+    : (imageLimits.mediaTypes as readonly string[]).join(',')
+  const onPickFiles = (e: ChangeEvent<HTMLInputElement>): void => {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = '' // re-picking the same file must fire change again
+    if (!canAcceptDrop) return
+    if (files.length > 0) intakeImages(files)
+  }
+
   const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>): void => {
     // Any caret/selection gesture ends a live paste attempt (the machine
     // cannot observe DOM selection). Cheap no-op when none is live.
@@ -693,6 +708,18 @@ export function InputBar({
           {notice.text}
         </div>
       )}
+      {addImages !== undefined && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          className={css.filePicker}
+          accept={pickerAccept}
+          multiple
+          tabIndex={-1}
+          aria-hidden
+          onChange={onPickFiles}
+        />
+      )}
       {/* Trigger clicks land on the card, not the textarea: the toolbar row's
           disabled controls swallow clicks otherwise (the CSS state disarms
           their pointer events), so the WHOLE capsule is the pick target.
@@ -783,6 +810,20 @@ export function InputBar({
                 <IconPlusOutline16 size={14} />
               </button>
             </Tooltip>
+            {addImages !== undefined && (
+              <Tooltip label={t('input.attach')} side="top" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.add}
+                  aria-label={t('input.attach')}
+                  disabled={!canAcceptDrop}
+                  onMouseDown={keepFocus}
+                  onClick={() => { fileInputRef.current?.click() }}
+                >
+                  <IconPaperclipOutline16 size={14} />
+                </button>
+              </Tooltip>
+            )}
             <div className={css.modes}>
               {accessSelect}
               {renderSlot('conversation.input.plan', { locked })}

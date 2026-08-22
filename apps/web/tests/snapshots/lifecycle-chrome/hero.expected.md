@@ -33,6 +33,8 @@
 - button "Commands":
   - img
 - tooltip "Commands"
+- button "Add images":
+  - img
 - 'button "Access mode, current: Workspace Write"': Workspace Write
 - button "Select model, current DeepSeek-V4-Flash":
   - text: DeepSeek-V4-Flash

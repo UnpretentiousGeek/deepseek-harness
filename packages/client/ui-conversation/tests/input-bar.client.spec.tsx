@@ -90,6 +90,8 @@ interface BenchOptions {
   rightItems?: React.ReactNode
   attachments?: readonly ComposerAttachment[]
   addImages?: (files: readonly File[]) => string | null
+  /** false removes the attachment face entirely (no paperclip, no intake). */
+  attachmentFace?: boolean
   commandMenuOpen?: boolean
   busyEnter?: 'queue' | 'steer'
   toggleCommandMenu?: (selection: { start: number; end: number }) => void
@@ -170,7 +172,7 @@ function bench(over?: BenchOptions) {
     useInput: bindSnapshotSelector(shell.state),
     inputActions: shell.actions,
     keyboard: shell,
-    addImages: over?.addImages ?? (() => null),
+    addImages: over?.attachmentFace === false ? undefined : (over?.addImages ?? (() => null)),
     removeImage,
     draftImages: ids => ids.flatMap((id) => {
       const attachment = over?.attachments?.find(candidate => candidate.id === id)
@@ -1115,6 +1117,68 @@ describe('running and lock semantics', () => {
     // Owner placeholder outranks the plan swap.
     const custom = bench({ plan: { active: true, pending: false }, placeholder: 'Custom placeholder' })
     expect(custom.textarea.placeholder).toBe('Custom placeholder')
+  })
+})
+
+describe('image file picker', () => {
+  const PAPERCLIP = 'button[aria-label="添加图片"]'
+
+  it('the paperclip opens the native picker, and picked files ride the shared intake', () => {
+    const addImages = vi.fn(() => null)
+    const { view } = bench({ addImages })
+    const picker = view.container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const open = vi.spyOn(HTMLInputElement.prototype, 'click')
+    onTestFinished(() => { open.mockRestore() })
+    fireEvent.click(view.container.querySelector(PAPERCLIP)!)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open.mock.instances[0]).toBe(picker)
+    // A picked image flows through the same intake as paste and drop.
+    const image = new File([Uint8Array.of(1, 2, 3)], 'pixel.png', { type: 'image/png' })
+    fireEvent.change(picker, { target: { files: [image] } })
+    expect(addImages).toHaveBeenCalledWith([image])
+    // The value reset lets re-picking the same file fire change again.
+    expect(picker.value).toBe('')
+    // An empty pick adds nothing.
+    fireEvent.change(picker, { target: { files: [] } })
+    expect(addImages).toHaveBeenCalledTimes(1)
+  })
+
+  it('the accept hint follows the projected intake media types, with the image set as fallback', () => {
+    const projected = bench({
+      imageLimits: {
+        maxImageBytes: 1024 * 1024,
+        maxImagesPerMessage: 2,
+        maxMessageImageBytes: 2 * 1024 * 1024,
+        maxImagePixels: 40_000_000,
+        maxImageDimension: 2000,
+        mediaTypes: ['image/png'] as const,
+      },
+    })
+    expect(projected.view.container.querySelector<HTMLInputElement>('input[type="file"]')!.accept).toBe('image/png')
+    const fallback = bench({})
+    expect(fallback.view.container.querySelector<HTMLInputElement>('input[type="file"]')!.accept)
+      .toBe('image/png,image/jpeg,image/webp,image/gif')
+  })
+
+  it('the paperclip is absent without an attachment face and locked while submitting', () => {
+    const faceless = bench({ attachmentFace: false })
+    expect(faceless.view.container.querySelector('input[type="file"]')).toBeNull()
+    expect(faceless.view.container.querySelector(PAPERCLIP)).toBeNull()
+    // Drive the machine into submitting; the picker button locks with the rest.
+    const { view, shell } = bench()
+    act(() => {
+      shell.setDraft('/goal ')
+      shell.beginCommand(
+        {
+          token: '/goal ',
+          submit: () => new Promise<never>(() => {}), // never settles: stays submitting
+        },
+        { start: 0, end: 6, draftRev: shell.snapshot.draftRev },
+      )
+      shell.submit()
+    })
+    expect(shell.snapshot.phase).toBe('submitting')
+    expect(view.container.querySelector<HTMLButtonElement>(PAPERCLIP)!.disabled).toBe(true)
   })
 })
 

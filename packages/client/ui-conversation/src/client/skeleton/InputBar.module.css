@@ -336,6 +336,11 @@
   cursor: default;
 }
 
+/* Native picker behind the paperclip button; the button owns every interaction. */
+.filePicker {
+  display: none;
+}
+
 /* Plan / Read-only / model — native <select>, chip-like closed chrome
    (figma ToggleButton: 13/20 medium secondary, 12px chevron). */
 .select {
