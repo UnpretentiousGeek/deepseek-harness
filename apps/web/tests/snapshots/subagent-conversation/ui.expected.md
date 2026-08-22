@@ -54,7 +54,7 @@
 - textbox "Message the agent"
 - button "Commands":
   - img
-- button "Add images":
+- button "Add attachments":
   - img
 - 'button "Access mode, current: Custom"': Custom
 - button "6% of context used"

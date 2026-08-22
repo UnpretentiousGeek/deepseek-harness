@@ -22,24 +22,25 @@ import type { ComposerSubmitGesture, InputSubmitMode } from './composer-submissi
 import type { ChatNode, ChatNodeKind } from './chat-nodes.ts'
 import type { CallId, SelectionTarget, ViewTab } from './views.ts'
 
-/** Browser-owned image that has not crossed the durable host boundary. */
+/** One browser-owned composer draft: a previewable image or a plain document file. */
 export interface ComposerAttachment {
-  kind: 'image'
+  kind: 'image' | 'document'
   id: DraftAttachmentId
   file: File
-  previewUrl: string
+  /** Object URL for image previews; absent for documents, which render as name chips. */
+  previewUrl?: string
 }
 
 /** Input state handed to the optional attachment presentation plugin. */
 export interface ComposerAttachmentsOwnerProps {
-  /** Browser-owned draft images in input order. */
+  /** Browser-owned draft attachments in input order. */
   attachments: readonly ComposerAttachment[]
-  /** Whether a document-level file drop may add images now. */
+  /** Whether a document-level file drop may add attachments now. */
   canAcceptDrop: boolean
   /** Add one dropped batch through the composer's validation path. */
-  onAddImages: (files: readonly File[]) => void
-  /** Remove one draft image through the conversation service. */
-  onRemoveImage: (id: DraftAttachmentId) => void
+  onAddFiles: (files: readonly File[]) => void
+  /** Remove one draft attachment through the conversation service. */
+  onRemoveAttachment: (id: DraftAttachmentId) => void
   /** Display-ready limits for the drop invitation. */
   dropLimits?: { readonly count: number; readonly size: string } | undefined
 }
@@ -554,11 +555,11 @@ export interface ComposerBarInjected {
   /** The InputBar-exclusive keyboard/DOM command face (private plane); absent with the session. */
   keyboard: ComposerKeyboard | undefined
   /** Create previews and append image ids to the session input. */
-  addImages: ((files: readonly File[]) => string | null) | undefined
+  addAttachments: ((files: readonly File[]) => string | null) | undefined
   /** Release one preview and remove its id from session input. */
-  removeImage: ((id: DraftAttachmentId) => void) | undefined
+  removeAttachment: ((id: DraftAttachmentId) => void) | undefined
   /** Resolve ordered input ids to browser-owned draft images. */
-  draftImages: ((ids: readonly DraftAttachmentId[]) => readonly ComposerAttachment[]) | undefined
+  draftAttachments: ((ids: readonly DraftAttachmentId[]) => readonly ComposerAttachment[]) | undefined
   /** Resolve one keyboard submission gesture against the current running state and persisted preference. */
   resolveSubmitMode: (
     running: boolean,

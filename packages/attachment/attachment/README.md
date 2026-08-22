@@ -8,6 +8,8 @@ Unsent composer images remain browser-owned temporary drafts. `validateImage` ru
 
 `admitEncodedImages(attachments, images)` is the shared wire entry used by every RPC endpoint that accepts browser uploads (the session prompt endpoint and the command executor): it enforces canonical base64 on every member, then delegates batch admission — limits, validation, ordered commit — to `saveImages`. The base64 upload form is `EncodedImageAttachment`, exported from `@deepseek-ai/dsh-attachment/types` so wire contracts can reference it.
 
+Documents are the second intake kind. `extractDocuments(inputs)` validates a batch against `documentLimits` (count, aggregate bytes, per-file bytes, accepted media types) and extracts each member's text; there is no durable document object — the extracted text becomes ordinary model-visible message content, so documents need no provider support beyond plain text. The base default policy accepts no documents (an empty media-type list refuses every batch with `UNSUPPORTED_DOCUMENT_TYPE`); extraction-capable backends override both the limits and the per-file extractor. Refusals carry the `DocumentAdmissionErrorCode` subset of `AttachmentErrorCode`.
+
 ## Model Experience
 
 Indirectly, through the role-neutral core `ImageBlock` and provider adapters that resolve its durable reference into an exact request version. Request descriptors expose the complete attachment id and actual request dimensions.
@@ -18,6 +20,7 @@ Adding an image changes the provider request and therefore invalidates the affec
 
 ## Known Limitations and Deferred Work
 
-- Version one accepts PNG, JPEG, WebP, and GIF only.
+- Version one accepts PNG, JPEG, WebP, and GIF images only.
 - Retention and garbage collection are deferred because resumed and forked sessions may share immutable objects.
-- Generic files, audio, video, and persistent unsent drafts require separate lifecycle and provider contracts.
+- Audio and video attachments require separate lifecycle and provider contracts.
+- Document extraction covers text-like formats plus PDF, DOCX, and XLSX; legacy binary formats (.doc, .xls, .ppt) and scanned/image-only PDFs yield no text and are refused or fail extraction loudly.

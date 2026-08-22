@@ -58,6 +58,49 @@ interface ImageAttachmentLimits {
 
 The local backend admits at most 20 images and 200 MiB of encoded source data per message. One source may use up to 20 MiB, 64,000,000 pixels, and 8192 pixels on either side. These source limits precede the independent normalization stage, which limits the long edge to 2048 pixels and encoded data to 4 MiB by default.
 
+```ts type-equiv
+/** Document formats accepted by the text-extraction path. */
+type DocumentMediaType =
+  | 'text/plain'
+  | 'text/markdown'
+  | 'text/csv'
+  | 'application/json'
+  | 'application/pdf'
+  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+```
+
+```ts type-equiv
+/** Deployment-resolved limits used by document upload admission. */
+interface DocumentAttachmentLimits {
+  maxDocumentBytes: number
+  maxDocumentsPerMessage: number
+  maxMessageDocumentBytes: number
+  maxExtractedChars: number
+  mediaTypes: readonly DocumentMediaType[]
+}
+```
+
+```ts type-equiv
+/** Request to validate and extract text from one uploaded document. */
+interface SubmitDocumentAttachment {
+  data: Uint8Array
+  mediaType: DocumentMediaType
+  name?: string
+}
+```
+
+```ts type-equiv
+/** Extracted text projection of one admitted document, in input order. */
+interface ExtractedDocument {
+  mediaType: DocumentMediaType
+  name?: string
+  text: string
+}
+```
+
+Documents are the second intake kind: `extractDocuments()` validates a batch against `documentLimits` and extracts each member's text. There is no durable document object — the extracted text becomes ordinary model-visible message content, so documents need no provider support beyond plain text. The base service accepts no documents (an empty media-type list refuses every batch with `UNSUPPORTED_DOCUMENT_TYPE`); extraction-capable backends override both the limits and the per-file extractor. Over-cap extractions are admitted and truncated with a visible `[Document truncated.]` marker.
+
 The reference records intrinsic dimensions and encoded length so clients can lay out history without decoding first, while every authoritative read still re-checks digest, media signature, dimensions, and metadata against the object.
 
 ## Commit and verified-read payloads
@@ -142,6 +185,18 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 Immutable binary attachment service. Implementations validate bytes before publishing a reference.
 
 ```ts cordis-catalog
+/**
+ * Validate one ordered document batch and extract each member's text.
+ * Batch failures (count, aggregate bytes, unsupported type, oversize file)
+ * start no extraction; a per-file failure fails the whole prompt, matching
+ * the image path's no-partial-admission rule.
+ * @param inputs - uploaded documents in their owning message order.
+ * @param signal - optional cancellation for extraction work.
+ * @returns extracted texts in the exact input order, truncated at the configured cap.
+ * @throws an `AttachmentError` carrying a caller-correctable code for every refusal.
+ */
+async extractDocuments( inputs: readonly SubmitDocumentAttachment[], signal?: AbortSignal, ): Promise<readonly ExtractedDocument[]>
+
 /**
  * Validate one image without persisting it.
  * Batch callers validate every member before saving any member.

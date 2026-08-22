@@ -4,17 +4,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  IconChevronLeftOutline14, IconChevronRightOutline14, IconCloseFill14,
+  IconChevronLeftOutline14, IconChevronRightOutline14, IconCloseFill14, IconDataOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './AttachmentRail.module.css'
 
-/** One rail thumbnail; strings arrive resolved (zero-cordis atom). */
+/** One rail card; strings arrive resolved (zero-cordis atom). */
 export interface AttachmentRailItem {
   /** Stable identity for the React key. */
   id: string
-  /** Object or data URL rendered as the thumbnail. */
-  previewUrl: string
-  /** Image alt text (display name with the owner's fallback applied). */
+  /** Object or data URL rendered as the thumbnail; absent renders a plain document chip. */
+  previewUrl?: string
+  /** Image alt text or document display name. */
   alt: string
   /** Accessible label of the item's remove control. */
   removeLabel: string
@@ -169,10 +169,17 @@ export function AttachmentRail<T extends AttachmentRailItem>({ items, labels, on
             <button
               type="button"
               className={css.thumbnail}
-              title={labels.open}
+              title={item.previewUrl === undefined ? item.alt : labels.open}
               onClick={() => { onOpen(item) }}
             >
-              <img src={item.previewUrl} alt={item.alt} />
+              {item.previewUrl === undefined
+                ? (
+                  <span className={css.fileChip} data-attachment-chip>
+                    <IconDataOutline16 size={16} />
+                    <span className={css.fileChipName}>{item.alt}</span>
+                  </span>
+                )
+                : <img src={item.previewUrl} alt={item.alt} />}
             </button>
             <button
               type="button"

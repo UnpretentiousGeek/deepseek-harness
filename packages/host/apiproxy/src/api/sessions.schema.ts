@@ -15,7 +15,7 @@ import type {
   ModelReasoningEffort, ModelSelection, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem, SessionSummary,
 } from './sessions.ts'
 import type { ToolEventView } from './events.ts'
-import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentIdType, DocumentAttachmentLimits, ImageAttachmentLimits, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { WorkspaceId } from './workspace.ts'
 import {
   SESSION_SEARCH_RESULT_LIMIT,
@@ -235,6 +235,20 @@ export const imageLimitsProjectionSchema = z.object({
   mediaTypes: z.array(z.string()),
 }) as unknown as z.ZodType<ImageAttachmentLimits>
 
+/**
+ * documentLimits projection unit schema (host-side view validation). An
+ * accepting-nothing backend publishes an empty media-type list; every other
+ * field stays positive because a non-serving backend is expressed through
+ * that list, not through zeroed caps.
+ */
+export const documentLimitsProjectionSchema = z.object({
+  maxDocumentBytes: z.number().int().positive(),
+  maxDocumentsPerMessage: z.number().int().positive(),
+  maxMessageDocumentBytes: z.number().int().positive(),
+  maxExtractedChars: z.number().int().positive(),
+  mediaTypes: z.array(z.string()),
+}) as unknown as z.ZodType<DocumentAttachmentLimits>
+
 /** session.history response value (projections rides the tail page only). */
 export const sessionHistoryValueSchema: z.ZodType<Wire<ResponseValue<'session.history'>>> = z.object({
   events: z.array(historyEntrySchema),
@@ -279,10 +293,22 @@ export const imageMediaTypeSchema = z.union([
   z.literal('image/gif'),
 ])
 
+/** Document media types accepted by the text-extraction path. */
+export const documentMediaTypeSchema = z.union([
+  z.literal('text/plain'),
+  z.literal('text/markdown'),
+  z.literal('text/csv'),
+  z.literal('application/json'),
+  z.literal('application/pdf'),
+  z.literal('application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+  z.literal('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+])
+
 /** Prompt wire content is intentionally narrower than merge-extensible durable core content. */
 export const promptContentPartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }),
   z.object({ type: z.literal('image'), mediaType: imageMediaTypeSchema, data: z.string(), name: z.string().optional() }),
+  z.object({ type: z.literal('document'), mediaType: documentMediaTypeSchema, data: z.string(), name: z.string().optional() }),
 ])
 
 /** session.prompt request payload, including optional browser-local request provenance. */
@@ -352,3 +378,13 @@ export const sessionCancelRequestSchema = z.object({
 export const sessionCancelValueSchema = z.object({
   accepted: z.literal(true),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.cancel'>>>
+
+/** session.delete request payload. */
+export const sessionDeleteRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+}) satisfies z.ZodType<Wire<RequestPayload<'session.delete'>>>
+
+/** session.delete response value. */
+export const sessionDeleteValueSchema = z.object({
+  deleted: z.literal(true),
+}) satisfies z.ZodType<Wire<ResponseValue<'session.delete'>>>

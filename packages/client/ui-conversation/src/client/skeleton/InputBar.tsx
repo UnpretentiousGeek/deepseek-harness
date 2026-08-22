@@ -17,15 +17,17 @@ import {
 import type {} from '@deepseek-ai/dsh-plan-mode/client'
 // Type-only: the `goal` projection key merge (hint disambiguation).
 import type {} from '@deepseek-ai/dsh-goal/client'
-// The `imageLimits` projection key merge (intake pre-check) arrives with the
-// wire types: apiproxy's sessions contract declares it, and client-runtime's
-// api-remotes import already places it in every client program.
+// The `imageLimits`/`documentLimits` projection key merges (intake pre-check)
+// arrive with the wire types: apiproxy's sessions contract declares them, and
+// client-runtime's api-remotes import already places them in every client program.
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ComposerBarProps } from '../contract/slots.ts'
 import { deriveDecorations } from '../input/decorations.ts'
 import type { DraftDecorations } from '../input/decorations.ts'
 import type { EditRange } from '../input/contract.ts'
 import { attachmentErrorText, imageSizeText } from '../image-labels.ts'
+import { classifyBrowserFile, DOCUMENT_PICKER_EXTENSIONS, DEFAULT_PICKER_IMAGE_TYPES, UnsupportedDocumentMediaTypeError } from '../attachment-kind.ts'
+import type { ClassifiedAttachment } from '../attachment-kind.ts'
 import { ReferenceIcon } from '../reference/ReferenceIcon.tsx'
 import { ContextMeter } from './ContextMeter.tsx'
 import { PermissionSelect } from './PermissionSelect.tsx'
@@ -77,7 +79,7 @@ function editRangeOf(pending: PendingEdit | null, prevLength: number, nextLength
 export type InputBarProps = ComposerBarProps
 
 export function InputBar({
-  useSession, useInput, inputActions, keyboard, addImages, removeImage, draftImages,
+  useSession, useInput, inputActions, keyboard, addAttachments, removeAttachment, draftAttachments,
   resolveSubmitMode, toggleCommandMenu, stop, command, t,
   renderSlot, useNotices, useLexicon, useMenuLauncher,
   useProjection, sessionId, variant, disabled: inert = false, blocked,
@@ -102,8 +104,8 @@ export function InputBar({
   const live = input !== undefined && keyboard !== undefined && inputActions !== undefined
   const draft = input?.draft ?? ''
   const attachments = useMemo(
-    () => input === undefined || draftImages === undefined ? [] : draftImages(input.imageIds),
-    [draftImages, input?.imageIds],
+    () => input === undefined || draftAttachments === undefined ? [] : draftAttachments(input.attachmentIds),
+    [draftAttachments, input?.attachmentIds],
   )
   const empty = draft.trim() === '' && attachments.length === 0
   // Transient error banner (machine notices, image-intake rejections, and
@@ -119,6 +121,7 @@ export function InputBar({
   // The deployment's image-intake limits (absent while no attachment service
   // is composed — the pre-check below then defers entirely to the host).
   const imageLimits = useProjection('imageLimits')
+  const documentLimits = useProjection('documentLimits')
   // Prompt failures are ordinary failures (no create/attach transaction exists
   // anymore): the toast announces promptError, the draft stays in the machine,
   // and the user resubmits. A remount over a session whose machine still holds
@@ -129,9 +132,9 @@ export function InputBar({
   useEffect(() => {
     if (promptError === null) return
     showToast(promptError.error.code === 'attachment-error'
-      ? attachmentErrorText(t, promptError.error.details.reason, imageLimits)
+      ? attachmentErrorText(t, promptError.error.details.reason, imageLimits, documentLimits)
       : `${promptError.error.message} (${promptError.error.code})`)
-  }, [promptError, showToast, t, imageLimits])
+  }, [promptError, showToast, t, imageLimits, documentLimits])
   useEffect(() => {
     if (notice?.level === 'error') showToast(notice.text)
   }, [notice, showToast])
@@ -184,10 +187,10 @@ export function InputBar({
 
   useEffect(() => {
     if (input === undefined || inputActions === undefined) return
-    if (attachments.length !== input.imageIds.length) {
-      inputActions.pruneImages(attachments.map(attachment => attachment.id))
+    if (attachments.length !== input.attachmentIds.length) {
+      inputActions.pruneAttachments(attachments.map(attachment => attachment.id))
     }
-  }, [attachments, input?.imageIds, inputActions])
+  }, [attachments, input?.attachmentIds, inputActions])
 
   // A native Safari edit that shortens the draft may leave the previous
   // soft-wrap layout behind after the mirror shrinks. The native-change signal
@@ -483,7 +486,7 @@ export function InputBar({
       .filter(item => item.kind === 'file')
       .map(item => item.getAsFile())
       .filter((file): file is File => file !== null)
-    if (files.length > 0) intakeImages(files)
+    if (files.length > 0) intakeFiles(files)
     const text = e.clipboardData.getData('text/plain')
     if (text === '') {
       if (files.length > 0) e.preventDefault()
@@ -506,49 +509,70 @@ export function InputBar({
   // a projected limit is refused as a whole batch, announced immediately, and
   // never enters the rail — no more submit-time failure rolling the rail
   // back. The host enforces the same limits at submit for callers that bypass
-  // this composer.
-  const intakeImages = useCallback((files: readonly File[]): void => {
-    if (addImages === undefined || files.length === 0) return
+  // this composer. Images and documents each carry their own limits frame;
+  // format classification precedes every count or size check, and a file of
+  // neither kind names the accepted formats instead of a limit it could never
+  // reach.
+  const intakeFiles = useCallback((files: readonly File[]): void => {
+    if (addAttachments === undefined || files.length === 0) return
     const rejected = ((): string | null => {
+      let classified: ClassifiedAttachment[]
+      try {
+        classified = files.map(file => classifyBrowserFile(file))
+      } catch (error) {
+        if (error instanceof UnsupportedDocumentMediaTypeError) return t('document.unsupportedType')
+        return t('image.unsupportedType')
+      }
+      const images = files.filter((_, index) => classified[index]?.kind === 'image')
+      const documents = files.filter((_, index) => classified[index]?.kind === 'document')
+      const draftTotal = attachments.reduce((sum, attachment) => sum + attachment.file.size, 0)
       if (imageLimits !== undefined) {
-        // Format precedes limits (DeepSeek Chat's filter order): a batch with
-        // a non-image must announce the format problem, not a count or size
-        // it could never pass anyway — addImages rejects it authoritatively.
-        if (files.some(file => !(imageLimits.mediaTypes as readonly string[]).includes(file.type))) {
-          return addImages(files)
-        }
-        if (attachments.length + files.length > imageLimits.maxImagesPerMessage) {
-          return t('image.tooMany', { count: imageLimits.maxImagesPerMessage })
-        }
-        if (files.some(file => file.size > imageLimits.maxImageBytes)) {
-          return t('image.fileTooLarge', { size: imageSizeText(imageLimits.maxImageBytes) })
-        }
-        const total = attachments.reduce((sum, attachment) => sum + attachment.file.size, 0)
-          + files.reduce((sum, file) => sum + file.size, 0)
-        if (total > imageLimits.maxMessageImageBytes) {
-          return t('image.totalTooLarge', { size: imageSizeText(imageLimits.maxMessageImageBytes) })
+        if (images.length > 0) {
+          if (attachments.length + images.length > imageLimits.maxImagesPerMessage) {
+            return t('image.tooMany', { count: imageLimits.maxImagesPerMessage })
+          }
+          if (files.some(file => file.size > imageLimits.maxImageBytes)) {
+            return t('image.fileTooLarge', { size: imageSizeText(imageLimits.maxImageBytes) })
+          }
+          if (draftTotal + files.reduce((sum, file) => sum + file.size, 0) > imageLimits.maxMessageImageBytes) {
+            return t('image.totalTooLarge', { size: imageSizeText(imageLimits.maxMessageImageBytes) })
+          }
         }
       }
-      return addImages(files)
+      if (documentLimits !== undefined && documents.length > 0) {
+        if (attachments.length + documents.length > documentLimits.maxDocumentsPerMessage) {
+          return t('document.tooMany', { count: documentLimits.maxDocumentsPerMessage })
+        }
+        if (documents.some(file => file.size > documentLimits.maxDocumentBytes)) {
+          return t('document.fileTooLarge', { size: imageSizeText(documentLimits.maxDocumentBytes) })
+        }
+        if (draftTotal + documents.reduce((sum, file) => sum + file.size, 0) > documentLimits.maxMessageDocumentBytes) {
+          return t('document.totalTooLarge', { size: imageSizeText(documentLimits.maxMessageDocumentBytes) })
+        }
+      }
+      return addAttachments(files)
     })()
     if (rejected !== null) showToast(rejected)
-  }, [addImages, attachments, imageLimits, showToast, t])
+  }, [addAttachments, attachments, imageLimits, documentLimits, showToast, t])
 
-  const canAcceptDrop = !locked && !machineBusy && addImages !== undefined
+  const canAcceptDrop = !locked && !machineBusy && addAttachments !== undefined
 
   // The file-picker face of the same intake the paste and drop paths use. The
-  // accept hint comes from the projected intake limits; the fallback repeats
-  // the host's image media-type set for a composer whose limits frame has not
-  // arrived yet — authoritative rejection stays with addImages either way.
+  // accept hint comes from the projected intake limits plus the document
+  // extensions whose browser-declared types are unreliable; the fallback
+  // repeats the host's accepted sets for a composer whose limits frames have
+  // not arrived yet — authoritative rejection stays with addAttachments.
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const pickerAccept = imageLimits === undefined
-    ? 'image/png,image/jpeg,image/webp,image/gif'
-    : (imageLimits.mediaTypes as readonly string[]).join(',')
+  const pickerAccept = [
+    ...(imageLimits?.mediaTypes ?? DEFAULT_PICKER_IMAGE_TYPES),
+    ...DOCUMENT_PICKER_EXTENSIONS,
+    ...(documentLimits?.mediaTypes ?? []),
+  ].join(',')
   const onPickFiles = (e: ChangeEvent<HTMLInputElement>): void => {
     const files = Array.from(e.target.files ?? [])
     e.target.value = '' // re-picking the same file must fire change again
     if (!canAcceptDrop) return
-    if (files.length > 0) intakeImages(files)
+    if (files.length > 0) intakeFiles(files)
   }
 
   const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>): void => {
@@ -708,7 +732,7 @@ export function InputBar({
           {notice.text}
         </div>
       )}
-      {addImages !== undefined && (
+      {addAttachments !== undefined && (
         <input
           ref={fileInputRef}
           type="file"
@@ -737,8 +761,8 @@ export function InputBar({
         {renderSlot('conversation.input.attachments', {
           attachments,
           canAcceptDrop,
-          onAddImages: intakeImages,
-          onRemoveImage: (id) => { removeImage?.(id) },
+          onAddFiles: intakeFiles,
+          onRemoveAttachment: (id) => { removeAttachment?.(id) },
           dropLimits: imageLimits === undefined ? undefined : {
             count: imageLimits.maxImagesPerMessage,
             size: imageSizeText(imageLimits.maxImageBytes),
@@ -810,7 +834,7 @@ export function InputBar({
                 <IconPlusOutline16 size={14} />
               </button>
             </Tooltip>
-            {addImages !== undefined && (
+            {addAttachments !== undefined && (
               <Tooltip label={t('input.attach')} side="top" delayMs={500}>
                 <button
                   type="button"

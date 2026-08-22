@@ -48,7 +48,7 @@
 - textbox "Message the agent"
 - button "Commands":
   - img
-- button "Add images":
+- button "Add attachments":
   - img
 - 'button "Access mode, current: Read Only"': Read Only
 - button "Select model, current DeepSeek-V4-Flash":

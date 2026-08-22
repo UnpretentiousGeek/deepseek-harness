@@ -431,6 +431,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
+        signature: 'readonly documentLimits: DocumentAttachmentLimits = Object.freeze({ maxDocumentBytes: 1, maxDocumentsPerMessage: 1, maxMessageDocumentBytes: 1, maxExtractedChars: 1, mediaTypes: Object.freeze([]), })',
+        description: 'Deployment-resolved document policy. The base default accepts no documents at all: an empty media-type list makes every batch fail admission with `UNSUPPORTED_DOCUMENT_TYPE`, so a backend without extraction support refuses documents loudly instead of pretending.',
+        parameters: [],
+      },
+      {
+        signature: 'async extractDocuments( inputs: readonly SubmitDocumentAttachment[], signal?: AbortSignal, ): Promise<readonly ExtractedDocument[]>',
+        description: 'Validate one ordered document batch and extract each member\'s text. Batch failures (count, aggregate bytes, unsupported type, oversize file) start no extraction; a per-file failure fails the whole prompt, matching the image path\'s no-partial-admission rule.',
+        parameters: [{ name: 'inputs', description: 'uploaded documents in their owning message order.' }, { name: 'signal', description: 'optional cancellation for extraction work.' }],
+        returns: 'extracted texts in the exact input order, truncated at the configured cap.',
+        throws: ['an `AttachmentError` carrying a caller-correctable code for every refusal.'],
+      },
+      {
         signature: 'abstract validateImage(input: SaveImageAttachment): Promise<void>',
         description: 'Validate one image without persisting it. Batch callers validate every member before saving any member.',
         parameters: [{ name: 'input', description: 'encoded bytes, declared media type, and optional display name.' }],
@@ -1238,6 +1250,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Lightweight listing from metadata, without a full-log parse.',
         parameters: [{ name: 'signal', description: 'optional cancellation for backend listing work.' }],
         returns: 'one header per materialized session.',
+      },
+      {
+        signature: 'abstract delete(id: SessionId, signal?: AbortSignal): Promise<boolean>',
+        description: 'Permanently remove one session\'s stored log and every backend artifact. A live session refuses (`cannot delete ... while it is live`) — dispose the owning Agent first; a draining disposal is awaited before the medium write. Unknown ids resolve to `false`. After resolution the id is unknown to list, load, and resume, and cannot be resurrected.',
+        parameters: [{ name: 'id', description: 'persisted session whose log is removed.' }, { name: 'signal', description: 'optional cancellation for backend removal work.' }],
+        returns: 'whether a durable artifact existed and was removed.',
       },
       {
         signature: 'abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]>',
@@ -2354,6 +2372,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'resolution after durability.',
       },
       {
+        signature: 'unarchiveSession(sessionId: SessionId): Promise<void>',
+        description: 'Remove one session from the registry-global archive set, restoring its grouping-surface visibility at its retained accounting position. The remaining ids keep their archive order. Idempotent for an id not currently archived, and no existence validation: membership alone authorizes removal, so stray ids stay removable.',
+        parameters: [{ name: 'sessionId', description: 'The session to unarchive.' }],
+        returns: 'resolution after durability.',
+      },
+      {
         signature: 'async resolveByPath(path: string): Promise<Workspace | undefined>',
         description: 'Resolve by canonical directory path without creating or mutating a workspace. A missing path rejects during `realpath`; an existing unowned directory returns `undefined`.',
         parameters: [{ name: 'path', description: 'Existing directory path in any spelling.' }],
@@ -2660,6 +2684,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Awaited parallel durability checkpoint: every listener runs and the caller awaits all of them, with no waterfall veto.',
     description: 'Awaited parallel durability checkpoint: every listener runs and the caller awaits all of them, with no waterfall veto. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`) reuses the session\'s owner scope.',
     parameters: [{ name: 'session', description: 'the session whose buffered events must reach durable storage.' }],
+  },
+  {
+    name: 'session/persistence-removed',
+    mode: 'emit',
+    signature: '\'session/persistence-removed\'(sessionId: SessionId): void',
+    summary: 'A stored session log was permanently removed from persistence, emitted once per successful backend deletion strictly after the medium write.',
+    description: 'A stored session log was permanently removed from persistence, emitted once per successful backend deletion strictly after the medium write. Listeners must not treat this as a live-session disposal: the session was already absent from the store, or its disposal edge preceded this.',
+    parameters: [{ name: 'sessionId', description: 'the id whose stored log no longer exists.' }],
   },
   {
     name: 'settings/document-updated',
@@ -3254,6 +3286,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DirectoryRegistrationHandle {\n    (): void;\n    replace(entries: readonly LlmConfigurableProvider[]): void;\n}',
   },
   {
+    name: 'DocumentAttachmentLimits',
+    declaration: 'export interface DocumentAttachmentLimits {\n    maxDocumentBytes: number;\n    maxDocumentsPerMessage: number;\n    maxMessageDocumentBytes: number;\n    maxExtractedChars: number;\n    mediaTypes: readonly DocumentMediaType[];\n}',
+  },
+  {
+    name: 'DocumentMediaType',
+    declaration: 'export type DocumentMediaType = \'text/plain\' | \'text/markdown\' | \'text/csv\' | \'application/json\' | \'application/pdf\' | \'application/vnd.openxmlformats-officedocument.wordprocessingml.document\' | \'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\';',
+  },
+  {
     name: 'Domain',
     declaration: 'export interface Domain<S extends DomainSpec> {\n    readonly name: string;\n    readonly global: DomainGlobalHandleOf<S>;\n    table<N extends keyof S[\'tables\'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>;\n    close(): Promise<void>;\n}',
   },
@@ -3336,6 +3376,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'EpochHeader',
     declaration: 'export interface EpochHeader {\n    config: LlmCallConfig;\n    adapterDefaults?: LlmCallConfigAdapterDefaults;\n    system?: string;\n    tools?: ToolSchema[];\n}',
+  },
+  {
+    name: 'ExtractedDocument',
+    declaration: 'export interface ExtractedDocument {\n    mediaType: DocumentMediaType;\n    name?: string;\n    text: string;\n}',
   },
   {
     name: 'FileDiff',
@@ -4528,6 +4572,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubagentStopReasonMap',
     declaration: 'export interface SubagentStopReasonMap {\n    completed: \'completed\';\n    aborted: \'aborted\';\n    error: \'error\';\n    \'max-tokens\': \'max-tokens\';\n    refusal: \'refusal\';\n}',
+  },
+  {
+    name: 'SubmitDocumentAttachment',
+    declaration: 'export interface SubmitDocumentAttachment {\n    data: Uint8Array;\n    mediaType: DocumentMediaType;\n    name?: string;\n}',
   },
   {
     name: 'SubprocessCollect',

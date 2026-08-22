@@ -8,6 +8,8 @@
 
 `admitEncodedImages(attachments, images)` 是每个接受浏览器上传的 RPC 端点（会话 prompt 端点与命令执行器）共用的 wire 入口：它对每个成员强制执行规范 base64，随后把批量准入——限额、校验、有序提交——委托给 `saveImages`。base64 上传形式为 `EncodedImageAttachment`，从 `@deepseek-ai/dsh-attachment/types` 导出，供 wire 契约引用。
 
+文档是第二种上传类型。`extractDocuments(inputs)` 按 `documentLimits` 校验批次（数量、总字节、单文件字节、接受的媒体类型），并提取每个成员的文本；不存在持久的文档对象——提取出的文本成为普通的模型可见消息内容，因此文档除了纯文本之外不需要任何提供方支持。基类默认策略不接受任何文档（空的媒体类型列表让每个批次以 `UNSUPPORTED_DOCUMENT_TYPE` 拒绝）；具备解析能力的后端同时覆盖限额与逐文件提取器。拒绝错误使用 `AttachmentErrorCode` 中的 `DocumentAdmissionErrorCode` 子集。
+
 ## 模型体验
 
 该包通过角色无关的核心 `ImageBlock`，以及把持久引用解析为确定请求版本的提供方适配器，间接影响模型。请求描述会公开完整附件 ID 和实际请求尺寸。
@@ -18,6 +20,8 @@
 
 ## 已知限制与待完成工作
 
-- 第一版仅接受 PNG、JPEG、WebP 和 GIF。
+- 图片在第一版仅接受 PNG、JPEG、WebP 和 GIF。
+- 音频与视频附件需要独立的生命周期与提供方契约。
+- 文档解析覆盖文本类格式以及 PDF、DOCX 和 XLSX；旧二进制格式（.doc、.xls、.ppt）和扫描版/纯图片 PDF 提取不出文本，会被明确拒绝或以解析失败结束。
 - 保留策略与垃圾回收尚未实现，因为恢复和 fork 后的会话可能共享不可变对象。
 - 通用文件、音频、视频和持久的未发送草稿需要单独的生命周期与提供方契约。

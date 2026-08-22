@@ -10,10 +10,10 @@ import { dirname } from 'node:path'
 import { z as zod } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { ExtractedDocument, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, freezeMessage, ReasoningEffortId, boundContextSummary } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
@@ -91,7 +91,7 @@ import type { ApprovalOutcome, ApprovalRequestId } from '@deepseek-ai/dsh-user-a
 // `ctx.get('approval')` without a value dependency on the seam (optional composition).
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { approvalResponsePayloadSchema } from './api/approvals.schema.ts'
-import { imageLimitsProjectionSchema, sessionListMetadataProjectionSchema } from './api/sessions.schema.ts'
+import { documentLimitsProjectionSchema, imageLimitsProjectionSchema, sessionListMetadataProjectionSchema } from './api/sessions.schema.ts'
 import { questionResponsePayloadSchema } from './api/questions.schema.ts'
 import type { ClientResponse, RpcError, RpcReceipt, RpcRequest, RpcResponse } from './api/rpc.ts'
 import { RpcId } from './api/rpc.ts'
@@ -125,17 +125,43 @@ export const DEFAULT_COLD_BLANK_PROBE_MAX_BYTES = 1024
 /** Conversation message event types (the pagination counting unit). */
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
 
+/**
+ * The model-visible envelope of one admitted document. Pinned text: the tag
+ * form attributes the extracted body to its file across every provider wire.
+ */
+function documentEnvelope(document: { name?: string; mediaType: string; text: string }): string {
+  const name = document.name === undefined ? '' : ` name="${document.name.replace(/["\\]/gu, '')}"`
+  return `<document${name} type="${document.mediaType}">\n${document.text}\n</document>`
+}
+
 /** Validate one prompt as a batch before publishing any durable image object. */
 async function durablePromptContent(ctx: Context, content: readonly PromptContentPart[]): Promise<ContentBlock[]> {
   if (content.every(part => part.type === 'text')) {
     return content.map(part => ({ type: 'text', text: part.text }))
   }
   const refs = await admitEncodedImages(ctx.attachments, content.filter(part => part.type === 'image'))
+  const documents = await ctx.attachments.extractDocuments(content
+    .filter((part): part is Extract<PromptContentPart, { type: 'document' }> => part.type === 'document')
+    .map(part => ({
+      mediaType: part.mediaType,
+      data: base64ToBytes(part.data),
+      ...(part.name === undefined ? {} : { name: part.name }),
+    })))
   let next = 0
-  return content.map(part => part.type === 'text'
-    ? { type: 'text', text: part.text }
+  let nextDocument = 0
+  return content.map((part) => {
+    if (part.type === 'text') return { type: 'text' as const, text: part.text }
     // admitEncodedImages returns one reference per image part in order.
-    : { type: 'image', attachment: refs[next++] as ImageAttachmentRef })
+    if (part.type === 'image') return { type: 'image' as const, attachment: refs[next++] as ImageAttachmentRef }
+    // extractDocuments returns one extraction per document part in order;
+    // each becomes an ordinary durable text block.
+    return { type: 'text' as const, text: documentEnvelope(documents[nextDocument++] as ExtractedDocument) }
+  })
+}
+
+/** Decode canonical base64 to bytes; malformed input fails the prompt like any other admission fault. */
+function base64ToBytes(encoded: string): Uint8Array {
+  return new Uint8Array(Buffer.from(encoded, 'base64'))
 }
 
 /** Search durable content for an image reference, including nested tool results. */
@@ -1066,6 +1092,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const presetSwitches = new Map<SessionId, Promise<unknown>>()
   /** Client-chosen identity creation/resume, deduplicated across concurrent retries. */
   const sessionCreations = new Map<SessionId, Promise<Agent>>()
+  /**
+   * Disposal capability for every Agent this gateway created (ensureSession
+   * and fork). `ctx.agents.get` returns a bare Agent by contract — the handle
+   * is the owner's capability — so session deletion disposes through this
+   * retained map, never through a registry-wide teardown face. A live agent
+   * absent here (another surface's creation, a session-backed subagent) is
+   * not this gateway's to stop, and delete refuses it.
+   */
+  const gatewayAgentHandles = new Map<SessionId, AgentHandle>()
   /** Serializes path ownership and explicit title checks with Workspace mutations. */
   let workspaceCreationChain = Promise.resolve()
   const pendingQuestions = new Map<RpcId, PendingQuestion>()
@@ -1260,6 +1295,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       init: () => null,
       apply: state => state,
       wire: { viewSchema: imageLimitsProjectionSchema, view: () => projectionCtx.attachments.imageLimits },
+      stateVersion: 1,
+    })
+    projectionCtx.sessionProjections.register<'documentLimits', null>({
+      key: 'documentLimits',
+      stateSchema: zod.null(),
+      init: () => null,
+      apply: state => state,
+      wire: { viewSchema: documentLimitsProjectionSchema, view: () => projectionCtx.attachments.documentLimits },
       stateVersion: 1,
     })
   })
@@ -1595,11 +1638,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // session's history was produced under that composition, and
           // rebuilding it differently would replay tool calls the model can no
           // longer make.
-          return (await ctx.agents.resume({
+          const resumed = await ctx.agents.resume({
             resumeSessionId: sessionId,
             agentOptions: agentOptions(),
             setup: (await composeAgent(storedPreset)).setup,
-          })).agent
+          })
+          gatewayAgentHandles.set(sessionId, resumed)
+          return resumed.agent
         }
 
         try {
@@ -1608,7 +1653,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
         const composition = await composeAgent(presetId)
-        return (await ctx.agents.create({
+        const created = await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
           meta: {
@@ -1616,7 +1661,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ...composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset },
           },
           setup: composition.setup,
-        })).agent
+        })
+        gatewayAgentHandles.set(sessionId, created)
+        return created.agent
       })().catch((error: unknown) => {
         // Another Host entry path may have published the same identity while
         // this operation crossed an asynchronous persistence/filesystem step.
@@ -2320,7 +2367,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // plane, composing nothing would leave the child with no tools at all.
         const forkComposition = await composeAgent(resolveSessionPreset(source))
         try {
-          await ctx.agents.create({
+          const forked = await ctx.agents.create({
             sessionId: childId,
             seed: events.slice(0, cut),
             meta: {
@@ -2334,6 +2381,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             agentOptions: agentOptions(),
             setup: forkComposition.setup,
           })
+          gatewayAgentHandles.set(childId, forked)
         } catch (error: unknown) {
           return err(request, {
             code: 'internal',
@@ -2530,6 +2578,57 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         agent.cancel({ kind: 'user' }, { keepInbox: true })
         return Promise.resolve(ok(request, { accepted: true as const }))
+      },
+
+      async delete(request) {
+        const { sessionId } = request.payload
+        const agent = ctx.agents.get(sessionId)
+        if (agent !== undefined && agent.status === 'running') {
+          return err(request, {
+            code: 'agent-busy',
+            message: `session "${sessionId}" is running a turn; stop it before deleting`,
+            details: { reason: 'turn-running' },
+          })
+        }
+        // A live session only this gateway can stop disposes here; anything
+        // else live (another surface's creation, a session-backed subagent)
+        // has no capability holder in this process and refuses. Disposal
+        // emits `session/disposed`, which reaches clients as the ordinary
+        // removed frame.
+        const handle = gatewayAgentHandles.get(sessionId)
+        if (agent !== undefined && handle === undefined) {
+          return err(request, {
+            code: 'agent-busy',
+            message: `session "${sessionId}" is live and owned by another surface`,
+            details: { reason: 'foreign-live-owner' },
+          })
+        }
+        // Existence gate over the same two sources archive reads: a definite
+        // miss fails before any disposal or medium write.
+        if (agent === undefined
+          && !(await ctx.sessionPersistence.list()).some(header => header.id === sessionId)) {
+          return err(request, {
+            code: 'session-not-found',
+            message: `session "${sessionId}" not found (not attached, not persisted)`,
+            details: { sessionId },
+          })
+        }
+        if (handle !== undefined) await handle.dispose()
+        try {
+          await ctx.sessionPersistence.delete(sessionId)
+        } catch (error: unknown) {
+          // The registry refusal mirrors the persistence contract's own guard;
+          // both mean the session came back live mid-delete, which is the
+          // caller's retry after stopping it — not an internal failure.
+          if (!(error instanceof Error && error.message.includes('while it is live'))) throw error
+          return err(request, {
+            code: 'agent-busy',
+            message: `session "${sessionId}" became live during deletion; stop it and retry`,
+            details: { reason: 'became-live' },
+          })
+        }
+        await ctx.workspaceRegistry.forgetSession(sessionId)
+        return ok(request, { deleted: true as const })
       },
     },
 
@@ -2876,6 +2975,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: { sessionId },
           })
         }
+        return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
+      },
+
+      // No business-error branch by contract: unarchive is idempotent for a
+      // non-archived id and validates no existence, so only storage faults
+      // (internal errors) can fail it.
+      async unarchiveSession(request) {
+        await ctx.workspaceRegistry.unarchiveSession(request.payload.sessionId)
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
       },
     },
@@ -3514,6 +3621,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }),
           ctx.on('session/disposed', (session: Session) => {
             queue.push(frame({ type: 'host/session-removed', sessionId: session.id }))
+          }),
+          // A persisted-only deletion has no live disposal edge; the removal
+          // frame rides the same shape so clients drop the row identically.
+          ctx.on('session/persistence-removed', (sessionId: SessionId) => {
+            queue.push(frame({ type: 'host/session-removed', sessionId }))
           }),
           ctx.on('agent/status', ({ agent, status }: { agent: Agent; status: AgentStatus }) => {
             queue.push(frame({ type: 'host/session-status', sessionId: agent.id, running: status === 'running' }))

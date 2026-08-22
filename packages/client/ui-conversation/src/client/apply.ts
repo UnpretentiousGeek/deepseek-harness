@@ -18,7 +18,8 @@ import type {
 } from './contract/slots.ts'
 import type { InputNotice } from './input/contract.ts'
 import { createChatStore } from './stores.ts'
-import { ConversationController, UnsupportedImageMediaTypeError } from './service.ts'
+import { ConversationController } from './service.ts'
+import { UnsupportedDocumentMediaTypeError } from './attachment-kind.ts'
 import type { IConversation } from './service.ts'
 import { ComposerBlockRegistry } from './input/blocks.ts'
 import type { ComposerBlock } from './input/blocks.ts'
@@ -217,15 +218,15 @@ export function apply(ctx: Context): void {
         if (sessionId !== undefined && nextId !== sessionId) {
           const from = inputHub.shell(sessionId)
           const draft = from.snapshot.draft
-          const imageIds = from.snapshot.imageIds
+          const attachmentIds = from.snapshot.attachmentIds
           const next = inputHub.shell(nextId)
-          if (imageIds.length === 0 || next.addImages(imageIds)) {
+          if (attachmentIds.length === 0 || next.addAttachments(attachmentIds)) {
             if (draft !== '') {
               next.setDraft(draft)
               from.setDraft('')
             }
-            if (imageIds.length > 0) {
-              for (const id of imageIds) from.removeImage(id)
+            if (attachmentIds.length > 0) {
+              for (const id of attachmentIds) from.removeAttachment(id)
             }
           }
         }
@@ -292,9 +293,9 @@ export function apply(ctx: Context): void {
       if (sessionId === undefined) {
         return {
           keyboard: undefined,
-          addImages: undefined,
-          removeImage: undefined,
-          draftImages: undefined,
+          addAttachments: undefined,
+          removeAttachment: undefined,
+          draftAttachments: undefined,
           resolveSubmitMode: (running, gesture, steeringAvailable) =>
             submissionPolicy.resolve(running, gesture, steeringAvailable),
           toggleCommandMenu: undefined,
@@ -308,27 +309,27 @@ export function apply(ctx: Context): void {
       const inputTriggers = inputHub.inputTriggers(sessionId)
       return {
         keyboard: shell,
-        addImages: (files) => {
+        addAttachments: (files) => {
           try {
-            const images = conversation.createDraftImages(files)
-            if (!shell.addImages(images.map(image => image.id))) {
-              conversation.releaseDraftImages(images)
+            const drafts = conversation.createDraftFiles(files)
+            if (!shell.addAttachments(drafts.map(attachment => attachment.id))) {
+              conversation.releaseDraftAttachments(drafts)
             }
             return null
           } catch (error: unknown) {
-            if (error instanceof UnsupportedImageMediaTypeError) {
-              // Positive copy: the supported list is fixed in imageMediaType,
-              // and naming it beats echoing the rejected MIME type back.
-              return t('image.unsupportedType')
+            if (error instanceof UnsupportedDocumentMediaTypeError) {
+              // Positive copy: the classifier owns the accepted set, and
+              // naming it beats echoing the rejected MIME type back.
+              return t('document.unsupportedType')
             }
             return error instanceof Error ? error.message : String(error)
           }
         },
-        removeImage: (id) => {
-          conversation.releaseDraftImage(id)
-          shell.removeImage(id)
+        removeAttachment: (id) => {
+          conversation.releaseDraftAttachment(id)
+          shell.removeAttachment(id)
         },
-        draftImages: ids => conversation.draftImages(ids),
+        draftAttachments: ids => conversation.draftAttachments(ids),
         resolveSubmitMode: (running, gesture, steeringAvailable) =>
           submissionPolicy.resolve(running, gesture, steeringAvailable),
         toggleCommandMenu: inputTriggers === undefined

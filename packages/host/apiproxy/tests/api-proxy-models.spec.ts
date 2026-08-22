@@ -150,6 +150,15 @@ describe('Web session model selection', () => {
         maxImageDimension: 2000,
         mediaTypes: ['image/png'],
       },
+      // A hand-rolled store accepting no documents: the empty media-type list
+      // fails any document part at admission, before extraction.
+      documentLimits: {
+        maxDocumentBytes: 1,
+        maxDocumentsPerMessage: 1,
+        maxMessageDocumentBytes: 1,
+        maxExtractedChars: 1,
+        mediaTypes: [] as string[],
+      },
       validateImage,
       saveImage,
     }
@@ -196,6 +205,58 @@ describe('Web session model selection', () => {
       error: { code: 'attachment-error', details: { reason: 'TOO_MANY_IMAGES' } },
     })
     expect(saveImage).toHaveBeenCalledTimes(2)
+    await ctx.fiber.dispose()
+  })
+
+  it('promotes document parts to extracted durable text blocks and refuses unknown types', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    const attachments = {
+      imageLimits: {
+        maxImageBytes: 4, maxImagesPerMessage: 2, maxMessageImageBytes: 4,
+        maxImagePixels: 4, maxImageDimension: 2000, mediaTypes: [],
+      },
+      documentLimits: {
+        maxDocumentBytes: 100, maxDocumentsPerMessage: 2, maxMessageDocumentBytes: 100,
+        maxExtractedChars: 50, mediaTypes: ['text/plain'],
+      },
+      validateImage: vi.fn(),
+      saveImage: vi.fn(),
+      // Own property shadows the base refusal; the store contract is extraction-capable here.
+      extractDocumentText: async (input: { data: Uint8Array }) =>
+        `TEXT(${new TextDecoder().decode(input.data)})`,
+    }
+    ctx.provide('attachments', Object.setPrototypeOf(attachments, AttachmentStore.prototype) as never)
+    const followup = vi.fn()
+    Object.assign(agent, { followup })
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      cwd: '/tmp',
+    })
+
+    const result = await api.sessions.prompt(request({
+      sessionId,
+      mode: 'queue' as const,
+      content: [
+        { type: 'document' as const, mediaType: 'text/plain' as const,
+          data: Buffer.from('hello notes').toString('base64'), name: 'notes.txt' },
+        { type: 'text' as const, text: 'summarize' },
+      ],
+    }))
+    expect(result.result.ok).toBe(true)
+    expect((followup.mock.calls[0]?.[0] as UserMessage).content).toEqual([
+      { type: 'text', text: '<document name="notes.txt" type="text/plain">\nTEXT(hello notes)\n</document>' },
+      { type: 'text', text: 'summarize' },
+    ])
+
+    const denied = await api.sessions.prompt(request({
+      sessionId,
+      mode: 'queue' as const,
+      content: [{ type: 'document' as const, mediaType: 'application/pdf' as const, data: 'AQ==' }],
+    }))
+    expect(denied.result).toMatchObject({
+      ok: false,
+      error: { code: 'attachment-error', details: { reason: 'UNSUPPORTED_DOCUMENT_TYPE' } },
+    })
     await ctx.fiber.dispose()
   })
 

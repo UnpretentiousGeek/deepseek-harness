@@ -5,7 +5,7 @@
  */
 
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentIdType, DocumentAttachmentLimits, ImageAttachmentLimits, ImageAttachmentRef, DocumentMediaType, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
 // The pure-type outlet: api/ is browser-importable, and the package root's
@@ -19,6 +19,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     sessionListMetadata: SessionListMetadata
     imageLimits: null
+    documentLimits: null
   }
   interface SessionProjectionMap {
     /**
@@ -36,6 +37,14 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
      * composed — clients skip the pre-check and let the host answer.
      */
     imageLimits: ImageAttachmentLimits
+    /**
+     * The deployment's document-intake limits: the attachments service's
+     * document config as this proxy enforces it at prompt admission, constant
+     * per host boot. A backend that accepts no documents publishes an empty
+     * media-type list — clients refuse every document at intake. Key absence
+     * means no attachment service is composed.
+     */
+    documentLimits: DocumentAttachmentLimits
   }
 }
 
@@ -87,10 +96,14 @@ export interface SessionProjectionsBlock {
   values: Partial<SessionProjectionMap>
 }
 
-/** Browser-submitted prompt content; the host promotes image bytes to durable references. */
+/**
+ * Browser-submitted prompt content; the host promotes image bytes to durable
+ * references and document bytes to extracted text blocks.
+ */
 export type PromptContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; mediaType: ImageMediaType; data: string; name?: string }
+  | { type: 'document'; mediaType: DocumentMediaType; data: string; name?: string }
 
 /** Complete model selection for one session. */
 export interface ModelSelection {
@@ -374,4 +387,15 @@ export interface SessionsApi {
    */
   cancel(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<{ accepted: true }>>
 
+  /**
+   * Permanently deletes one session: its stored log, its workspace accounting
+   * slot, and its archive-set entry. There is no undo. A session with a
+   * running turn fails with `agent-busy` (stop it first); so does any live
+   * session this gateway did not create, including session-backed subagents.
+   * A live-but-idle gateway-created session is disposed before removal — its
+   * `session/disposed` edge reaches clients as the ordinary removed frame,
+   * the same frame a persisted-only deletion pushes after the medium write.
+   * A session neither live nor in persistence fails with `session-not-found`.
+   */
+  delete(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<{ deleted: true }>>
 }

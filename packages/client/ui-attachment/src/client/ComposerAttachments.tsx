@@ -16,7 +16,7 @@ interface ComposerRailItem extends AttachmentRailItem {
 
 /** Draft-image rail, document drop target, and original-image preview slot entry. */
 export function ComposerAttachments({
-  attachments, canAcceptDrop, onAddImages, onRemoveImage, dropLimits, t,
+  attachments, canAcceptDrop, onAddFiles, onRemoveAttachment, dropLimits, t,
 }: ComposerAttachmentsProps) {
   const [preview, setPreview] = useState<ComposerAttachment | null>(null)
   const [dragActive, setDragActive] = useState(false)
@@ -62,7 +62,7 @@ export function ComposerAttachments({
       if (dataTransfer === null) return
       event.preventDefault()
       reset()
-      if (canAcceptDrop) onAddImages([...dataTransfer.files])
+      if (canAcceptDrop) onAddFiles([...dataTransfer.files])
     }
     document.addEventListener('dragenter', onDragEnter)
     document.addEventListener('dragover', onDragOver)
@@ -76,12 +76,14 @@ export function ComposerAttachments({
       document.removeEventListener('drop', onDrop)
       window.removeEventListener('dragend', reset)
     }
-  }, [canAcceptDrop, onAddImages])
+  }, [canAcceptDrop, onAddFiles])
 
   const railItems = useMemo<ComposerRailItem[]>(() => attachments.map(attachment => ({
     id: attachment.id,
-    previewUrl: attachment.previewUrl,
-    alt: attachment.file.name || t('image.pending'),
+    ...(attachment.previewUrl === undefined ? {} : { previewUrl: attachment.previewUrl }),
+    alt: attachment.previewUrl === undefined
+      ? (attachment.file.name || t('document.pending'))
+      : (attachment.file.name || t('image.pending')),
     removeLabel: t('image.remove', { name: attachment.file.name }),
     attachment,
   })), [attachments, t])
@@ -100,13 +102,13 @@ export function ComposerAttachments({
             items={railItems}
             labels={attachmentRailLabels(t)}
             onOpen={(item) => { setPreview(item.attachment) }}
-            onRemove={(item) => { onRemoveImage(item.attachment.id) }}
+            onRemove={(item) => { onRemoveAttachment(item.attachment.id) }}
           />
         </div>
       )}
       {preview !== null && (
         <ImageLightbox
-          src={preview.previewUrl}
+          src={preview.previewUrl ?? ""}
           alt={preview.file.name || t('image.original')}
           labels={lightboxLabels(t)}
           onClose={closePreview}

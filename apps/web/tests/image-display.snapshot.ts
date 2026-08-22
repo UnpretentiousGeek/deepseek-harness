@@ -134,15 +134,35 @@ it('accepts pasted images into the composer rail in order and removes them', asy
     expect(document.querySelector('[role="group"][aria-label="Pending images"]')).toBeNull()
   })
 
-  // An unsupported file announces a transient toast (the inline strip is
-  // gone) and the banner dismisses itself after its hold-and-fade lifetime.
+  // A pasted text file is a document draft now: it joins the rail as a name
+  // chip instead of a raster thumbnail.
   fireEvent.paste(textarea, {
     clipboardData: {
       items: [{ kind: 'file', type: 'text/plain', getAsFile: () => new File(['x'], 'notes.txt', { type: 'text/plain' }) }],
       getData: () => '',
     },
   })
-  const unsupportedMessage = 'Only PNG, JPG, WebP, and GIF images are supported'
+  const rail2 = await screen.findByRole('group', { name: 'Pending images' })
+  await waitFor(() => {
+    expect([...rail2.querySelectorAll('[data-attachment-chip]')].map(chip => chip.textContent))
+      .toEqual(['notes.txt'])
+  })
+
+  const removeChip = [...rail2.querySelectorAll('button[aria-label="Remove image notes.txt"]')]
+  for (const button of removeChip) fireEvent.click(button)
+  await waitFor(() => {
+    expect(screen.queryByRole('group', { name: 'Pending images' })).toBeNull()
+  })
+
+  // An unsupported file announces a transient toast (the inline strip is
+  // gone) and the banner dismisses itself after its hold-and-fade lifetime.
+  fireEvent.paste(textarea, {
+    clipboardData: {
+      items: [{ kind: 'file', type: '', getAsFile: () => new File([Uint8Array.of(1)], 'blob.bin', { type: '' }) }],
+      getData: () => '',
+    },
+  })
+  const unsupportedMessage = 'Supports TXT, Markdown, CSV, JSON, PDF, DOCX, XLSX, and common code files'
   const toast = await screen.findByText(unsupportedMessage)
   expect(toast.closest('[role="alert"]')).not.toBeNull()
   await waitFor(() => {
@@ -166,7 +186,7 @@ it('accepts a whole-page drop under the limits-labeled overlay and refuses an ov
   const dataTransfer = { types: ['Files'], files: [image], dropEffect: 'none' }
   fireEvent.dragEnter(document.body, { dataTransfer })
   const overlay = await screen.findByRole('status')
-  expect(overlay.textContent).toContain('Drag images here to add them')
+  expect(overlay.textContent).toContain('Drag images or files here to add them')
   await waitFor(() => {
     expect(overlay.textContent).toContain('Up to 20 images, 5MB each')
   })

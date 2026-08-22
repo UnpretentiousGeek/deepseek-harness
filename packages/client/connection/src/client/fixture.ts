@@ -2508,6 +2508,11 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         const userText = content.map(b => (b.type === 'text' ? b.text : '')).join('')
         const durable: ContentBlock[] = content.map((block) => {
           if (block.type === 'text') return block
+          // Documents extract to plain text on the real host; the fixture
+          // mirrors that projection instead of storing a reference.
+          if (block.type === 'document') {
+            return { type: 'text', text: `<document type="${block.mediaType}">\n[fixture document]\n</document>` }
+          }
           const attachment: ImageAttachmentRef = {
             attachmentId: `fixture:${randomUuid()}` as AttachmentIdType,
             mediaType: block.mediaType,
@@ -2599,6 +2604,16 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           setRunning(request.payload.sessionId, false)
         }
         return ok(request, { accepted: true as const })
+      },
+      delete: (request) => {
+        // The fixture keeps no persistence medium: deletion drops the summary
+        // row, its log, and any pending replay state in memory.
+        const { sessionId } = request.payload
+        replays.get(sessionId)?.finish(true)
+        sessions.splice(sessions.findIndex(summary => summary.sessionId === sessionId), 1)
+        logs.delete(sessionId)
+        emitHost({ type: 'host/session-removed', sessionId })
+        return ok(request, { deleted: true as const })
       },
     },
     subagents: {
@@ -2789,6 +2804,16 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         const { sessionId } = request.payload
         if (!archivedSessionIds.includes(sessionId)) {
           archivedSessionIds.push(sessionId)
+          emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
+        }
+        return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
+      unarchiveSession: (request) => {
+        const { sessionId } = request.payload
+        // Idempotent removal, no existence gate (mirrors the host registry):
+        // only a real membership change emits the snapshot frame.
+        if (archivedSessionIds.includes(sessionId)) {
+          archivedSessionIds.splice(archivedSessionIds.indexOf(sessionId), 1)
           emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
@@ -3192,6 +3217,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'session.attachment': return this.api.sessions.attachment(request)
       case 'session.updateQueue': return this.api.sessions.updateQueue(request)
       case 'session.cancel': return this.api.sessions.cancel(request)
+      case 'session.delete': return this.api.sessions.delete(request)
       case 'subagent.list': return this.api.subagents.list(request)
       case 'subagent.history': return this.api.subagents.history(request)
       case 'subagent.prompt': return this.api.subagents.prompt(request, signal)
@@ -3209,6 +3235,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.unarchiveSession': return this.api.workspace.unarchiveSession(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)

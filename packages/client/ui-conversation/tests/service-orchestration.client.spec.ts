@@ -10,7 +10,8 @@ import { makeTranslate, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-run
 import type { QueuedMessage, SessionFace } from '@deepseek-ai/dsh-client-runtime/client'
 import { ComposerBlockRegistry } from '../src/client/input/blocks.ts'
 import { InputHub } from '../src/client/input/hub.ts'
-import { ConversationController, UnsupportedImageMediaTypeError } from '../src/client/service.ts'
+import { ConversationController } from '../src/client/service.ts'
+import { UnsupportedDocumentMediaTypeError } from '../src/client/attachment-kind.ts'
 import { zh } from '../src/client/locales.ts'
 
 async function bench(readAttachment?: SessionFace['readAttachment']) {
@@ -88,13 +89,13 @@ describe('ConversationController', () => {
     const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:draft-1')
     const revoked = vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined)
     try {
-      const [attachment] = b.root.createDraftImages([
+      const [attachment] = b.root.createDraftFiles([
         new File([new Uint8Array(4)], 'a.png', { type: 'image/png' }),
       ])
       if (attachment === undefined) throw new Error('draft attachment missing')
-      b.root.input.for(b.runtime.sessions.scope('s1')!).addImages([attachment.id])
+      b.root.input.for(b.runtime.sessions.scope('s1')!).addAttachments([attachment.id])
       await b.runtime.sessions.remove('s1')
-      expect(b.root.draftImages([attachment.id])).toEqual([])
+      expect(b.root.draftAttachments([attachment.id])).toEqual([])
       expect(revoked).toHaveBeenCalledWith('blob:draft-1')
     } finally {
       created.mockRestore()
@@ -106,12 +107,65 @@ describe('ConversationController', () => {
   it('validates every MIME type before allocating previews', async () => {
     const b = await bench()
     const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview')
-    expect(() => b.root.createDraftImages([
+    expect(() => b.root.createDraftFiles([
       new File([Uint8Array.of(1)], 'valid.png', { type: 'image/png' }),
       new File([Uint8Array.of(2)], 'invalid.svg', { type: 'image/svg+xml' }),
-    ])).toThrow(UnsupportedImageMediaTypeError)
+    ])).toThrow(UnsupportedDocumentMediaTypeError)
     expect(created).not.toHaveBeenCalled()
     created.mockRestore()
+    await b.runtime.dispose()
+  })
+
+  it('sends documents as document wire parts without allocating previews', async () => {
+    const b = await bench()
+    const created = vi.spyOn(URL, 'createObjectURL')
+    const [attachment] = b.root.createDraftFiles([
+      new File([new TextEncoder().encode('# doc')], 'notes.md', { type: '' }),
+    ])
+    if (attachment === undefined) throw new Error('draft attachment missing')
+    expect(attachment.kind).toBe('document')
+    expect(created).not.toHaveBeenCalled()
+    created.mockRestore()
+    b.root.input.for(b.runtime.sessions.scope('s1')!).addAttachments([attachment.id])
+    const session = b.runtime.sessions.binding('s1')!.session
+    await b.scoped.sendSession(session, '', [attachment.id], 'queue')
+    const [content] = b.prompt.mock.calls[0] as unknown as [{ type: string; mediaType?: string; data?: string; name?: string }[]]
+    expect(content).toEqual([
+      {
+        type: 'document',
+        mediaType: 'text/markdown',
+        data: btoa('# doc'),
+        name: 'notes.md',
+      },
+    ])
+    // Success consumed the draft.
+    expect(b.root.draftAttachments([attachment.id])).toEqual([])
+    await b.runtime.dispose()
+  })
+
+  it('a document attached to an image-claiming command refuses with product copy', async () => {
+    const b = await bench()
+    const [attachment] = b.root.createDraftFiles([
+      new File([new TextEncoder().encode('x')], 'notes.txt', { type: 'text/plain' }),
+    ])
+    if (attachment === undefined) throw new Error('draft attachment missing')
+    const actx = b.runtime.sessions.scope('s1')!
+    const shell = b.hub.for(actx) as unknown as import('../src/client/input/facade.ts').SessionInputShell
+    const submit = vi.fn(() => Promise.resolve({ kind: 'success' as const }))
+    shell.setDraft('/plan ')
+    expect(shell.beginCommand(
+      { token: '/plan ', images: true, submit },
+      { start: 0, end: 6, draftRev: shell.snapshot.draftRev },
+    )).toBe(true)
+    shell.addAttachments([attachment.id])
+    shell.submit()
+    await vi.waitFor(() => {
+      expect(shell.notices.getSnapshot()?.text).toContain('仅接受图片')
+    })
+    expect(submit).not.toHaveBeenCalled()
+    // Draft and attachment retained for correction.
+    expect(shell.snapshot.draft).toBe('/plan ')
+    expect(b.root.draftAttachments([attachment.id])).toHaveLength(1)
     await b.runtime.dispose()
   })
 

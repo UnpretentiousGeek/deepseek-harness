@@ -94,3 +94,59 @@ export interface RequestImageAttachment {
   /** Whether the encoded request version retains an alpha channel. */
   hasAlpha: boolean
 }
+
+/**
+ * Document formats accepted by the text-extraction path. Text-like formats
+ * decode directly; the three binary formats have dedicated extractors. Legacy
+ * binary formats without a maintained extractor (`.doc`, `.xls`, `.ppt`) are
+ * deliberately absent — admission refuses them by name instead of guessing.
+ */
+export type DocumentMediaType =
+  | 'text/plain'
+  | 'text/markdown'
+  | 'text/csv'
+  | 'application/json'
+  | 'application/pdf'
+  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+/** Deployment-resolved limits used by document upload admission. */
+export interface DocumentAttachmentLimits {
+  /** Maximum encoded source bytes for one document. */
+  maxDocumentBytes: number
+  /** Maximum documents in one submitted message. */
+  maxDocumentsPerMessage: number
+  /** Maximum aggregate encoded document bytes in one submitted message. */
+  maxMessageDocumentBytes: number
+  /** Maximum extracted characters per document before truncation marks it. */
+  maxExtractedChars: number
+  mediaTypes: readonly DocumentMediaType[]
+}
+
+/** Base64-encoded document upload accompanying one wire request. */
+export interface EncodedDocumentAttachment {
+  /** Declared media type; verified against the bytes during extraction. */
+  mediaType: DocumentMediaType
+  /** Canonical base64 encoding of the document bytes. */
+  data: string
+  /** Optional display name; it is never interpreted as a path. */
+  name?: string
+}
+
+/** Request to validate and extract text from one uploaded document. */
+export interface SubmitDocumentAttachment {
+  data: Uint8Array
+  /** Caller-declared media type, checked against the bytes by the extractor. */
+  mediaType: DocumentMediaType
+  /** Optional browser/provider display name; it is never interpreted as a path. */
+  name?: string
+}
+
+/** Extracted text projection of one admitted document, in input order. */
+export interface ExtractedDocument {
+  mediaType: DocumentMediaType
+  /** Optional display name carried through to the model-visible envelope. */
+  name?: string
+  /** Extracted UTF-8 text, truncated at the configured character cap. */
+  text: string
+}

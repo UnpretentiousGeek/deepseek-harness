@@ -58,6 +58,49 @@ interface ImageAttachmentLimits {
 
 本地后端每条消息最多准入 20 张图片，源图编码数据总量不超过 200 MiB。单张源图不得超过 20 MiB、64,000,000 像素和单边 8192 像素。这些源文件限制先于独立的规范化阶段执行；该阶段默认把长边限制为 2048 像素，把编码数据限制为 4 MiB。
 
+```ts type-equiv
+/** 文本提取路径接受的文档格式。 */
+type DocumentMediaType =
+  | 'text/plain'
+  | 'text/markdown'
+  | 'text/csv'
+  | 'application/json'
+  | 'application/pdf'
+  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+```
+
+```ts type-equiv
+/** 部署解析的文档上传准入限额。 */
+interface DocumentAttachmentLimits {
+  maxDocumentBytes: number
+  maxDocumentsPerMessage: number
+  maxMessageDocumentBytes: number
+  maxExtractedChars: number
+  mediaTypes: readonly DocumentMediaType[]
+}
+```
+
+```ts type-equiv
+/** 上传文档的校验与文本提取请求。 */
+interface SubmitDocumentAttachment {
+  data: Uint8Array
+  mediaType: DocumentMediaType
+  name?: string
+}
+```
+
+```ts type-equiv
+/** 按输入顺序给出的已准入文档文本提取结果。 */
+interface ExtractedDocument {
+  mediaType: DocumentMediaType
+  name?: string
+  text: string
+}
+```
+
+文档是第二种上传类型：`extractDocuments()` 按 `documentLimits` 校验批次并提取每个成员的文本。不存在持久的文档对象——提取出的文本成为普通的模型可见消息内容，因此文档除纯文本外不需要任何提供方支持。基类服务不接受任何文档（空媒体类型列表让每个批次以 `UNSUPPORTED_DOCUMENT_TYPE` 拒绝）；具备解析能力的后端同时覆盖限额与逐文件提取器。超过上限的提取会被接纳并以可见的 `[Document truncated.]` 标记截断。
+
 引用记录固有尺寸和编码长度，使客户端无需先解码即可排布历史记录；每次权威读取仍会根据对象重新校验摘要、媒体签名、尺寸和元数据。
 
 ## 提交与经校验读取的数据
@@ -142,6 +185,18 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 Immutable binary attachment service. Implementations validate bytes before publishing a reference.
 
 ```ts cordis-catalog
+/**
+ * Validate one ordered document batch and extract each member's text.
+ * Batch failures (count, aggregate bytes, unsupported type, oversize file)
+ * start no extraction; a per-file failure fails the whole prompt, matching
+ * the image path's no-partial-admission rule.
+ * @param inputs - uploaded documents in their owning message order.
+ * @param signal - optional cancellation for extraction work.
+ * @returns extracted texts in the exact input order, truncated at the configured cap.
+ * @throws an `AttachmentError` carrying a caller-correctable code for every refusal.
+ */
+async extractDocuments( inputs: readonly SubmitDocumentAttachment[], signal?: AbortSignal, ): Promise<readonly ExtractedDocument[]>
+
 /**
  * Validate one image without persisting it.
  * Batch callers validate every member before saving any member.
