@@ -1,3 +1,5 @@
 interface:
   display_name: "Review Animations"
   short_description: "Review animation and motion code against the animations.dev craft bar"
+policy:
+  allow_implicit_invocation: false
