@@ -158,6 +158,11 @@ class TestPersistence extends SessionPersistence {
     return Promise.resolve([...this.durable.values()].map(value => value.meta))
   }
 
+  /** Deletion is a definite miss in this fake: nothing durable is ever held. */
+  delete(_id: SessionId): Promise<boolean> {
+    return Promise.resolve(false)
+  }
+
   async listSnapshots(): Promise<SessionPersistenceSnapshot[]> {
     await this.onListSnapshots?.()
     return [...this.durable.values()].map((value, index) => ({

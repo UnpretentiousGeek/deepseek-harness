@@ -44,7 +44,7 @@ const workspacePendingMutation = z.discriminatedUnion('operation', [
  * from one that still needs the header-only history bootstrap;
  * `workspaceIds` is the authoritative display order. `archivedSessionIds` is
  * the registry-global archive set layered over workspace accounting: an
- * archived session keeps its `sessionIds` slot (unarchiving must restore the
+ * archived session keeps its `sessionIds` slot (unarchiving restores the
  * position), so the set never participates in the one-owner accounting
  * invariant. Defaulted so records written before the field parse unchanged.
  */

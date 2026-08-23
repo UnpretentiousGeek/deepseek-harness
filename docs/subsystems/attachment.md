@@ -59,7 +59,12 @@ interface ImageAttachmentLimits {
 The local backend admits at most 20 images and 200 MiB of encoded source data per message. One source may use up to 20 MiB, 64,000,000 pixels, and 8192 pixels on either side. These source limits precede the independent normalization stage, which limits the long edge to 2048 pixels and encoded data to 4 MiB by default.
 
 ```ts type-equiv
-/** Document formats accepted by the text-extraction path. */
+/**
+ * Document formats accepted by the text-extraction path. Text-like formats
+ * decode directly; the three binary formats have dedicated extractors. Legacy
+ * binary formats without a maintained extractor (`.doc`, `.xls`, `.ppt`) are
+ * deliberately absent — admission refuses them by name instead of guessing.
+ */
 type DocumentMediaType =
   | 'text/plain'
   | 'text/markdown'
@@ -73,9 +78,13 @@ type DocumentMediaType =
 ```ts type-equiv
 /** Deployment-resolved limits used by document upload admission. */
 interface DocumentAttachmentLimits {
+  /** Maximum encoded source bytes for one document. */
   maxDocumentBytes: number
+  /** Maximum documents in one submitted message. */
   maxDocumentsPerMessage: number
+  /** Maximum aggregate encoded document bytes in one submitted message. */
   maxMessageDocumentBytes: number
+  /** Maximum extracted characters per document before truncation marks it. */
   maxExtractedChars: number
   mediaTypes: readonly DocumentMediaType[]
 }
@@ -85,7 +94,9 @@ interface DocumentAttachmentLimits {
 /** Request to validate and extract text from one uploaded document. */
 interface SubmitDocumentAttachment {
   data: Uint8Array
+  /** Caller-declared media type, checked against the bytes by the extractor. */
   mediaType: DocumentMediaType
+  /** Optional browser/provider display name; it is never interpreted as a path. */
   name?: string
 }
 ```
@@ -94,7 +105,9 @@ interface SubmitDocumentAttachment {
 /** Extracted text projection of one admitted document, in input order. */
 interface ExtractedDocument {
   mediaType: DocumentMediaType
+  /** Optional display name carried through to the model-visible envelope. */
   name?: string
+  /** Extracted UTF-8 text, truncated at the configured character cap. */
   text: string
 }
 ```

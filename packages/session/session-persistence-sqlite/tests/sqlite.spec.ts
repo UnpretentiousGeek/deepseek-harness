@@ -308,6 +308,32 @@ describe('SessionPersistenceSqlite physical packing', () => {
     db.close()
   })
 
+  it('deletes a session row with its events durably and resolves false for unknown ids', async () => {
+    const path = await freshDbPath()
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const fiber = await ctx.plugin(SessionPersistenceSqlite, { path })
+    const removals: SessionId[] = []
+    ctx.on('session/persistence-removed', (id: SessionId) => { removals.push(id) })
+    const header = meta('delete-me')
+    try {
+      await ctx.sessionPersistence.create(header)
+      await ctx.sessionPersistence.append(header.id, chunkLog(4))
+      await expect(ctx.sessionPersistence.delete(header.id)).resolves.toBe(true)
+      expect((await ctx.sessionPersistence.list()).map(row => row.id)).not.toContain(header.id)
+      await expect(ctx.sessionPersistence.inspect(header.id)).rejects.toThrow(/not found/)
+      await expect(ctx.sessionPersistence.delete(SessionId('delete-ghost'))).resolves.toBe(false)
+      expect(removals).toEqual([header.id])
+    } finally {
+      await fiber.dispose()
+    }
+
+    const db = new DatabaseSync(path)
+    expect(db.prepare(testSql('count-events')).get()).toEqual({ count: 0 })
+    expect(db.prepare(sql('select-session')).get(header.id)).toBeUndefined()
+    db.close()
+  })
+
   it.runIf(process.platform !== 'win32')('bounds paced-stream WAL extent without rewriting committed rows', async () => {
     const events = chunkLog(1_000)
     const measured = await measureWriteTraffic(await freshDbPath('dsh-sqlite-traffic-'), events)

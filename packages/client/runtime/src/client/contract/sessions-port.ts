@@ -44,4 +44,11 @@ export interface SessionsPort {
   open(id: SessionId): void
   /** Clear the current selection into the no-session view state. */
   clear(): void
+  /**
+   * Permanently delete a session on the host: stored log, workspace
+   * accounting slot, and archive-set entry. There is no undo. The removal
+   * frame drops the row from every list surface.
+   * @param id - session to delete.
+   */
+  delete(id: SessionId): Promise<void>
 }

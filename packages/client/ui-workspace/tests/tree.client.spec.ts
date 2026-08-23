@@ -3,7 +3,7 @@ import type {
   SessionId, SessionListState, SessionSummary, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, workspaceLabel, relativeTime,
+  deriveArchived, deriveFlat, deriveGroups, deriveSearchResults, workspaceLabel, relativeTime,
   UNGROUPED_KEY, UNGROUPED_LABEL,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -248,6 +248,31 @@ describe('deriveFlat', () => {
     const kept = summary('kept', 1)
     const gone = summary('gone', 2)
     expect(deriveFlat(list(kept, gone), archived('gone')).map(row => row.id)).toEqual([kept.id])
+  })
+})
+
+describe('deriveArchived', () => {
+  it('lists archived sessions newest-first regardless of archive order or membership account', () => {
+    const a = summary('a', 10)
+    const b = summary('b', 30)
+    const c = summary('c', 20)
+    // The archive set's own order (b, a) does not drive display; recency does.
+    expect(deriveArchived(list(a, b, c), archived('b', 'a', 'c')).map(row => row.id))
+      .toEqual([sid('b'), sid('c'), sid('a')])
+  })
+
+  it('excludes subagent-origin rows and blank placeholders from the Archived section', () => {
+    const real = summary('real', 1)
+    const subagent = { ...summary('subagent', 2), origin: 'subagent' as const }
+    const blank = { ...summary('blank', 3), blank: true }
+    expect(deriveArchived(list(real, subagent, blank), archived('real', 'subagent', 'blank')).map(row => row.id))
+      .toEqual([real.id])
+  })
+
+  it('skips archived ids whose summary has not landed (or no longer exists)', () => {
+    expect(deriveArchived(list(summary('present', 1)), archived('ghost', 'present')).map(row => row.id))
+      .toEqual([sid('present')])
+    expect(deriveArchived(list(), archived('gone'))).toEqual([])
   })
 })
 

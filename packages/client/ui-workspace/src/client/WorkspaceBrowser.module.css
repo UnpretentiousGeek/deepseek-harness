@@ -378,6 +378,38 @@
   margin-top: 4px;
 }
 
+/* Trailing Archived section: a muted, non-interactive header row above the
+   archived session rows. Present only while the archive set is non-empty. */
+.archivedSection {
+  margin-top: 8px;
+}
+
+.archivedHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.archivedIcon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.archivedTitle {
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.archivedCount {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .listTopDropIndicator,
 .workspaceDropBefore::before,
 .workspaceDropAfter::after {

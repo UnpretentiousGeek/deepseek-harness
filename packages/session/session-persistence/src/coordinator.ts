@@ -199,6 +199,17 @@ export interface PersistenceBackend<TornMarker = unknown> {
   list(signal?: AbortSignal): Promise<SessionHeader[]>
 
   /**
+   * Permanently remove one session's log and every backend artifact for its
+   * id. Removal is durable when the returned promise resolves; the id must
+   * then be absent from {@link list} and reject in {@link loadStored}. An
+   * absent id resolves to `false` without writing.
+   * @param id - persisted session id whose artifacts are removed.
+   * @param signal - optional cancellation for backend removal work.
+   * @returns whether a stored artifact existed and was removed.
+   */
+  deleteStored(id: SessionId, signal?: AbortSignal): Promise<boolean>
+
+  /**
    * Optional side-effect-free artifact locator, used to point refusal
    * diagnostics ({@link SessionFormatUnsupportedError}) at the raw log.
    * Backends without one artifact per session omit it or return `undefined`.
@@ -997,8 +1008,39 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       : observeQueuedAbort(retired, signal, () => false)
   }
 
-  // Listing is a direct backend read and needs no coordinator state.
+  /**
+   * Permanently remove one session's stored log. Serialized against every
+   * other operation for the id, so a concurrent append can neither interleave
+   * nor resurrect the removed artifact through a stale cursor. A live session
+   * refuses — dispose its owning Agent first; an in-flight disposal drains
+   * before the medium write. After resolution the id is dropped from
+   * coordinator bookkeeping and every cached preparation.
+   * @param id - persisted session whose log is removed.
+   * @param signal - optional cancellation for backend removal work.
+   * @returns whether a durable artifact existed and was removed.
+   */
+  async delete(id: SessionId, signal?: AbortSignal): Promise<boolean> {
+    // Like prepare/load, the disposal drain is awaited OUTSIDE the id's
+    // serialization chain: retirement's own cleanup joins that chain after
+    // its flush, so waiting inside would queue this removal ahead of the
+    // drain it awaits and deadlock both.
+    await this.waitForRetirement(id, signal)
+    return await this.serialize(id, async () => {
+      if (this.ctx.sessions.get(id) !== undefined) {
+        throw new Error(`cannot delete session "${id}" while it is live`)
+      }
+      const deleted = await this.backend.deleteStored(id, signal)
+      if (!deleted) return false
+      // The medium no longer holds the log: drop bookkeeping and cached
+      // preparations so nothing can serve or extend the removed identity.
+      this.states.delete(id)
+      this.preparations.invalidate(id)
+      this.ctx.emit('session/persistence-removed', id)
+      return true
+    })
+  }
 
+  // Listing is a direct backend read and needs no coordinator state.
   // --- per-id serialization + adoption helpers ---
 
   /**

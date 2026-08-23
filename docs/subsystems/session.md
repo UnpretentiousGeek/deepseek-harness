@@ -850,4 +850,26 @@ Awaited parallel durability checkpoint: every listener runs and the caller await
 Types: [Scoped](scope.md)
 
 Source: [`packages/core/session/src/index.ts`](../../packages/core/session/src/index.ts)
+
+<a id="sessionpersistence-removed--emit"></a>
+
+#### `session/persistence-removed` — emit
+
+A stored session log was permanently removed from persistence, emitted once per successful backend deletion strictly after the medium write. Listeners must not treat this as a live-session disposal: the session was already absent from the store, or its disposal edge preceded this.
+
+```ts cordis-catalog
+/**
+ * A stored session log was permanently removed from persistence, emitted
+ * once per successful backend deletion strictly after the medium write.
+ * Listeners must not treat this as a live-session disposal: the session
+ * was already absent from the store, or its disposal edge preceded this.
+ * @param sessionId - the id whose stored log no longer exists.
+ * @mode emit
+ */
+'session/persistence-removed'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
 <!-- END GENERATED cordis-surface -->

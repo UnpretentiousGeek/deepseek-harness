@@ -542,6 +542,22 @@ export class SessionRuntime implements ISessions {
   }
 
   /**
+   * Permanently delete a session on the host. The removal frame (live
+   * disposal or persisted-only push) drops the row from the list; deleting
+   * the current session also clears the selection, mirroring the frame path's
+   * gray-out with the cleaner no-session view the unary echo already knows.
+   * @param id - session to delete.
+   * @throws {Error} with the wire error code when the host refuses
+   *   (`session-not-found`, `agent-busy`).
+   */
+  async delete(id: SessionId): Promise<void> {
+    const result = await this.manager.delete(id)
+    if (!result.ok) throw new Error(`session delete failed: ${result.error.code}: ${result.error.message}`)
+    this.projectList()
+    if (this.list.getSnapshot().current === id) this.clear()
+  }
+
+  /**
    * Resolve an Agent-scoped context view (use-and-discard).
    * @param id - session id (the agent identity — 1:1 same axis).
    * @returns scoped ctx, or undefined for a session neither listed nor already scoped.

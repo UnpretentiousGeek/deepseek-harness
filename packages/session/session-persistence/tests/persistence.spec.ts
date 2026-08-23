@@ -118,6 +118,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     return this.coordinator.readFrom(id, fromSeq, signal)
   }
 
+  delete(id: SessionId, signal?: AbortSignal): Promise<boolean> {
+    return this.coordinator.delete(id, signal)
+  }
+
   // --- PersistenceBackend hooks (the Map storage primitives) ---
 
   // A Map-backed store has no torn tails, so `tornMarker` is never set.
@@ -172,6 +176,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
       header: structuredClone(entry.meta),
       revision: memoryRevision(entry),
     }))
+  }
+
+  async deleteStored(id: SessionId): Promise<boolean> {
+    return this.store.delete(id)
   }
 }
 
@@ -232,6 +240,10 @@ class ControlledBackend implements PersistenceBackend<never> {
 
   async list(): Promise<SessionHeader[]> {
     return [...this.store.values()].map(entry => structuredClone(entry.meta))
+  }
+
+  async deleteStored(id: SessionId): Promise<boolean> {
+    return this.store.delete(id)
   }
 
   async close(): Promise<void> {
@@ -1957,6 +1969,47 @@ describe('SessionPersistence service registration', () => {
       })
     } finally {
       await fiber.dispose()
+    }
+  })
+})
+
+describe('coordinator deletion', () => {
+  it('removes a stored log durably, reports absence afterwards, and emits one removal event', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const fiber = await ctx.plugin(MemoryPersistence)
+    const removals: SessionId[] = []
+    ctx.on('session/persistence-removed', (id: SessionId) => { removals.push(id) })
+    const id = SessionId('delete-target')
+    let sessionFiber!: { dispose(): Promise<void> }
+    try {
+      sessionFiber = await ctx.plugin(Object.assign(async (inner: Context) => {
+        const session = inner.sessions.create(id)
+        session.append('turn/start', { turn: 1 })
+        session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+        await inner.sessions.flush(session)
+      }, { inject: ['sessions'] }))
+      await expect(ctx.sessionPersistence.delete(id)).rejects.toThrow(/while it is live/)
+      expect(removals).toEqual([])
+
+      await sessionFiber.dispose()
+      await vi.waitFor(() => { expect(ctx.sessions.list()).toHaveLength(0) })
+
+      await expect(ctx.sessionPersistence.delete(id)).resolves.toBe(true)
+      expect((await ctx.sessionPersistence.list()).map(header => header.id)).not.toContain(id)
+      await expect(ctx.sessionPersistence.load(id)).rejects.toThrow(/not found/)
+      expect(removals).toEqual([id])
+
+      // The repeat is a definite miss: no write, no second event.
+      await expect(ctx.sessionPersistence.delete(id)).resolves.toBe(false)
+      expect(removals).toEqual([id])
+
+      // A never-stored id resolves to false without emitting.
+      await expect(ctx.sessionPersistence.delete(SessionId('delete-ghost'))).resolves.toBe(false)
+      expect(removals).toEqual([id])
+    } finally {
+      await fiber.dispose()
+      await ctx.fiber.dispose()
     }
   })
 })

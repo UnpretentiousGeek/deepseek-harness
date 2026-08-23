@@ -1244,6 +1244,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     agentOptions,
     setup: async ({ meta, events }) =>
       (await composeAgent(resolveSessionPreset({ header: meta, events }))).setup,
+    // Resolver-resumed agents are live identities like ensureSession's own;
+    // retaining them here keeps one disposal owner per session so
+    // `session.delete` can dispose whichever path created it.
+    retain: (sessionId, handle) => {
+      gatewayAgentHandles.set(sessionId, handle)
+    },
   })
 
   /** Send one transient frame to every connected mux consumer. */
@@ -2605,8 +2611,20 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         // Existence gate over the same two sources archive reads: a definite
         // miss fails before any disposal or medium write.
+        // Optional-service read (the ensureSession convention): persistence is
+        // mounted in every real composition.
+        const persistence = ctx.get('sessionPersistence')
+        if (persistence === undefined) {
+          return err(request, {
+            code: 'internal',
+            message: 'session persistence is not mounted',
+            details: {},
+          })
+        }
+        // Existence gate over the same two sources archive reads: a definite
+        // miss fails before any disposal or medium write.
         if (agent === undefined
-          && !(await ctx.sessionPersistence.list()).some(header => header.id === sessionId)) {
+          && !(await persistence.list()).some(header => header.id === sessionId)) {
           return err(request, {
             code: 'session-not-found',
             message: `session "${sessionId}" not found (not attached, not persisted)`,
@@ -2615,7 +2633,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         if (handle !== undefined) await handle.dispose()
         try {
-          await ctx.sessionPersistence.delete(sessionId)
+          await persistence.delete(sessionId)
         } catch (error: unknown) {
           // The registry refusal mirrors the persistence contract's own guard;
           // both mean the session came back live mid-delete, which is the

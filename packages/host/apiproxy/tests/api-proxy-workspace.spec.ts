@@ -568,4 +568,46 @@ describe('Host Workspace increments', () => {
     })
     abort.abort()
   })
+
+  it('unarchives a session out of the global set, restores its surface, and streams the set once', async () => {
+    const { api, root } = await harness()
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'unarchive-home') }))).workspace
+    const first = SessionId('session-unarchive-first')
+    const second = SessionId('session-unarchive-second')
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId: first })))
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId: second })))
+    expectOk(await api.workspace.archiveSession(request({ sessionId: first })))
+    expectOk(await api.workspace.archiveSession(request({ sessionId: second })))
+
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const changed = nextHostFrame(stream)
+    // Removing the middle id preserves the remaining archive order.
+    expect(expectOk(await api.workspace.unarchiveSession(request({ sessionId: first }))).archivedSessionIds)
+      .toEqual([second])
+    expect(await changed).toMatchObject({
+      payload: { type: 'host/archived-sessions-changed', archivedSessionIds: [second] },
+    })
+
+    // The restored session is visible again in its retained accounting slot
+    // (attach prepends, so the later session leads); list re-baselines the
+    // shrunken set.
+    const listed = expectOk(await api.workspace.list(request({})))
+    expect(listed.archivedSessionIds).toEqual([second])
+    expect(listed.items[0]?.sessionIds).toEqual([second, first])
+    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId))
+      .toEqual(expect.arrayContaining([first, second]))
+
+    // Idempotent repeats (already unarchived and unknown ids) succeed without
+    // a business error and emit no second frame.
+    expect(expectOk(await api.workspace.unarchiveSession(request({ sessionId: first }))).archivedSessionIds)
+      .toEqual([second])
+    expect(expectOk(await api.workspace.unarchiveSession(request({ sessionId: SessionId('session-ghost') }))).archivedSessionIds)
+      .toEqual([second])
+    const after = nextHostFrame(stream)
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId: SessionId('session-after-unarchive') })))
+    expect((await after).payload.type).not.toBe('host/archived-sessions-changed')
+    abort.abort()
+  })
 })

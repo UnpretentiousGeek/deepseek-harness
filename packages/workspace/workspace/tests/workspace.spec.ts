@@ -941,4 +941,69 @@ describe('registry-global session archive', () => {
     const upgraded = await harness({ pool: legacy })
     expect(upgraded.registry.archivedSessionIds).toEqual([])
   })
+
+  it('unarchives durably in place, keeps the remaining order, and restores visibility', async () => {
+    const dir = await makeDir('unarchive-home')
+    const result = await harness({
+      sessions: [header('kept', dir, 100), header('gone', dir, 200), header('third', dir, 300)],
+    })
+    for (const id of ['gone', 'kept', 'third']) {
+      await result.registry.archiveSession(SessionId(id))
+    }
+    expect(result.registry.archivedSessionIds).toEqual(['gone', 'kept', 'third'])
+    const changesAfterArchives = result.changes.filter(change => change.table === '').length
+
+    await result.registry.unarchiveSession(SessionId('kept'))
+    // The middle removal preserves both neighbors' archive order.
+    expect(result.registry.archivedSessionIds).toEqual(['gone', 'third'])
+    expect(storedState(result.pool).archivedSessionIds).toEqual(['gone', 'third'])
+    expect(result.changes.filter(change => change.table === '').length).toBe(changesAfterArchives + 1)
+
+    // Unarchiving is a display-set write: accounting never moved.
+    expect(result.registry.list()[0]!.sessionIds).toContain('kept')
+
+    // A re-archive appends at the end of the (now shorter) set.
+    await result.registry.archiveSession(SessionId('kept'))
+    expect(result.registry.archivedSessionIds).toEqual(['gone', 'third', 'kept'])
+  })
+
+  it('treats unarchive of a non-archived or unknown id as an idempotent no-op', async () => {
+    const dir = await makeDir('unarchive-noop')
+    const result = await harness({ sessions: [header('s1', dir, 100)] })
+    await result.registry.archiveSession(SessionId('s1'))
+    const changesBefore = result.changes.filter(change => change.table === '').length
+
+    await result.registry.unarchiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(result.changes.filter(change => change.table === '').length).toBe(changesBefore + 1)
+
+    // Neither an already-unarchived session nor a completely unknown id
+    // writes; unlike archiving there is no existence gate to fail.
+    await result.registry.unarchiveSession(SessionId('s1'))
+    await result.registry.unarchiveSession(SessionId('ghost'))
+    expect(storedState(result.pool).archivedSessionIds).toEqual([])
+    expect(result.changes.filter(change => change.table === '').length).toBe(changesBefore + 1)
+  })
+
+  it('forgets a deleted session from accounting and the archive set without touching others', async () => {
+    const dir = await makeDir('forget-home')
+    const result = await harness({
+      sessions: [header('gone', dir, 100), header('kept', dir, 200), header('loose', dir, 300)],
+    })
+    const workspace = result.registry.list()[0]!
+    await result.registry.archiveSession(SessionId('gone'))
+    await result.registry.archiveSession(SessionId('kept'))
+
+    await result.registry.forgetSession(SessionId('gone'))
+    expect(workspace.sessionIds).not.toContain('gone')
+    expect(result.registry.archivedSessionIds).toEqual(['kept'])
+    const stored = storedState(result.pool)
+    expect(stored.archivedSessionIds).toEqual(['kept'])
+    expect((result.registry.get(workspace.id)?.sessionIds ?? [])).toContain('kept')
+
+    // An unaccounted, unarchived id (or a repeat) is an idempotent no-op.
+    await result.registry.forgetSession(SessionId('loose'))
+    await result.registry.forgetSession(SessionId('ghost'))
+    expect(storedState(result.pool)).toEqual(stored)
+  })
 })

@@ -260,6 +260,27 @@ export class SqliteStore implements PersistenceBackend<number> {
     }))
   }
 
+  /**
+   * Remove the session row and its events in one transaction, resolving to
+   * `false` when the id holds no row. Events are deleted explicitly so
+   * removal does not depend on the connection's foreign-key enforcement.
+   */
+  async deleteStored(id: SessionId, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
+    await this.open()
+    signal?.throwIfAborted()
+    this.db.exec(sql('begin-immediate'))
+    try {
+      validateSchemaForMutation(this.databaseConstructor, this.db, this.databasePath)
+      this.db.prepare(sql('delete-session-events')).run(id)
+      const session = this.db.prepare(sql('delete-session-row')).run(id)
+      this.db.exec(sql('commit'))
+      return session.changes > 0
+    } catch (error: unknown) {
+      this.rollback(error, 'delete')
+    }
+  }
+
   async close(): Promise<void> {
     if (this.ready === undefined) {
       if (this.pathReady !== undefined) await Promise.allSettled([this.pathReady])

@@ -185,7 +185,7 @@ export class TestSessions implements ISessions {
   /** Calls observed on the service-level face, newest last. */
   readonly calls: {
     method: 'open' | 'openSubagent' | 'setSubagentCatalogOpen' | 'refreshSubagents'
-      | 'clear' | 'search' | 'fork' | 'killJob'
+      | 'clear' | 'search' | 'fork' | 'killJob' | 'delete'
     args: unknown[]
   }[] = []
 
@@ -461,6 +461,24 @@ export class TestSessions implements ISessions {
       draft.current = undefined
       draft.currentAddress = undefined
     })
+  }
+
+  /**
+   * Permanently delete a session (recorded). The default mirrors the
+   * production frame effect: the row leaves the list and a current selection
+   * on that id clears.
+   * @param sessionId - session to delete.
+   */
+  delete(sessionId: SessionId): Promise<void> {
+    this.calls.push({ method: 'delete', args: [sessionId] })
+    this.list.update((draft) => {
+      draft.ids = draft.ids.filter(id => id !== sessionId)
+      draft.byId = Object.fromEntries(
+        Object.entries(draft.byId).filter(([id]) => id !== sessionId),
+      )
+      if (draft.current === sessionId) draft.current = undefined
+    })
+    return Promise.resolve()
   }
 
   /**

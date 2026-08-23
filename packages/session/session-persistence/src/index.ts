@@ -61,6 +61,18 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionPersistence: SessionPersistence
   }
+
+  interface Events {
+    /**
+     * A stored session log was permanently removed from persistence, emitted
+     * once per successful backend deletion strictly after the medium write.
+     * Listeners must not treat this as a live-session disposal: the session
+     * was already absent from the store, or its disposal edge preceded this.
+     * @param sessionId - the id whose stored log no longer exists.
+     * @mode emit
+     */
+    'session/persistence-removed'(sessionId: SessionId): void
+  }
 }
 
 /**
@@ -226,6 +238,18 @@ export abstract class SessionPersistence extends Service {
    * @returns one header per materialized session.
    */
   abstract list(signal?: AbortSignal): Promise<SessionHeader[]>
+
+  /**
+   * Permanently remove one session's stored log and every backend artifact.
+   * A live session refuses (`cannot delete ... while it is live`) — dispose
+   * the owning Agent first; a draining disposal is awaited before the medium
+   * write. Unknown ids resolve to `false`. After resolution the id is unknown
+   * to {@link list}, {@link load}, and resume, and cannot be resurrected.
+   * @param id - persisted session whose log is removed.
+   * @param signal - optional cancellation for backend removal work.
+   * @returns whether a durable artifact existed and was removed.
+   */
+  abstract delete(id: SessionId, signal?: AbortSignal): Promise<boolean>
 
   /**
    * List materialized sessions with cheap per-log change tokens.

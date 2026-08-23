@@ -30,4 +30,4 @@ Sidebar workspace 浏览区的会话行菜单里，「Delete session」一直是
 
 ## 后果
 
-归档后 UI 无查看/取消归档入口（本期口径，记录在 README 的 Known Limitation 中）；数据与 slot 完好，后续加恢复面只是 UI + 一个逆向 RPC。`workspace.list` 响应形状变化是 pre-release 直改（无兼容层）。e2e（workspace-management）钉住了「归档→行消失→reload 后仍隐藏、日志仍在」的全链路；domain 层测试钉住幂等、未知 id 拒绝、跨重启恢复与旧介质默认升级。
+引入时归档后 UI 无查看/取消归档入口（本期口径，当时记录在 README 的 Known Limitation 中）；数据与 slot 完好，恢复面始终只是「UI + 一个逆向 RPC」。该恢复面现已存在——`workspace.unarchiveSession` 与侧边栏「归档」区——本文描述的每个机制保持不变（见[会话取消归档 note](2026-08-21-workspace-session-unarchive.zh.md)）。`workspace.list` 响应形状变化是 pre-release 直改（无兼容层）。e2e（workspace-management）钉住了「归档→行消失→reload 后仍隐藏、日志仍在」的全链路；domain 层测试钉住幂等、未知 id 拒绝、跨重启恢复与旧介质默认升级。

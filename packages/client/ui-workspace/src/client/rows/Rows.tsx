@@ -2,7 +2,8 @@
  * Workspace browser tree row components (figma Cell set 14:3080): pure presentational —
  * all data and callbacks arrive via props. Hover swaps (folder->chevron,
  * time->ellipsis, action buttons) are CSS-only. Row ... menus are visual-only
- * except workspace Rename/Delete and session Rename/Fork/Archive; the session
+ * except workspace Rename/Delete, session Rename/Fork/Archive/Delete, and
+ * archived row Unarchive/Delete; the session
  * and workspace hover cards are suppressed while a menu is open.
  */
 import { useState } from 'react'
@@ -359,7 +360,7 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
  * @param props.t - the browser root's locale seat.
  * @returns the session row.
  */
-export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, drag, flat = false, t }: {
+export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork, onArchive, onDelete, drag, flat = false, t }: {
   node: SessionNode
   currentId: string | undefined
   now: number
@@ -370,6 +371,8 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
   onFork: (id: SessionNode['id']) => void
   /** Archive this session (row menu action; commits without a dialog). */
   onArchive: (id: SessionNode['id']) => void
+  /** Open the delete-confirmation dialog for this session (destructive). */
+  onDelete: (id: SessionNode['id'], currentTitle: string) => void
   /** Present only on draggable rows (workspace-group sessions outside search). */
   drag?: RowDragProps | undefined
   /** The row is rendered without a parent Workspace header. */
@@ -391,6 +394,7 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
     { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutline16 /> },
     // 20-native glyph in the menu's 16px icon slot (Menu.module.css .itemIcon).
     { id: 'archive', label: t('menu.archiveSession'), icon: <IconArchiveOutline20 size={16} /> },
+    { id: 'delete', label: t('menu.deleteSession'), icon: <IconTrashOutline16 />, danger: true },
   ]
   // Figma session cell: pad 8, status slot 16, then a 4px title gap.
   const ownRow = (
@@ -450,9 +454,13 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
             items={sessionMenuItems}
             onSelect={(id) => {
               setMenuOpen(false)
+              // Unknown ids leave before the dispatch: a future menu row must
+              // not inherit the destructive branch as an else fallback.
+              if (id !== 'rename' && id !== 'fork' && id !== 'archive' && id !== 'delete') return
               if (id === 'rename') onRename(node.id, row.title)
-              if (id === 'fork') onFork(node.id)
-              if (id === 'archive') onArchive(node.id)
+              else if (id === 'fork') onFork(node.id)
+              else if (id === 'archive') onArchive(node.id)
+              else onDelete(node.id, row.title)
             }}
             portal
             closeOnPointerLeave
@@ -480,5 +488,80 @@ export function SessionNodeItem({ node, currentId, now, onOpen, onRename, onFork
       copyLabel={t('copy')}
       copiedLabel={t('hover.copied')}
     />
+  )
+}
+
+/**
+ * One archived session row in the trailing Archived section: title, relative
+ * time, and a single-action menu. Activating the row restores the session to
+ * its grouping surface and then opens it — an open session must always be
+ * visible, so restore folds into the open action; the menu item unarchives
+ * without switching the selection.
+ * @param props.node - derived archived session node.
+ * @param props.now - epoch ms for relative-time formatting.
+ * @param props.onRestore - unarchive this session and open it.
+ * @param props.onUnarchive - unarchive this session, keeping the selection.
+ * @param props.t - the browser root's locale seat.
+ * @returns the archived session row.
+ */
+export function ArchivedSessionItem({ node, now, onRestore, onUnarchive, onDelete, t }: {
+  node: SessionNode
+  now: number
+  onRestore: (id: SessionNode['id']) => void
+  onUnarchive: (id: SessionNode['id']) => void
+  /** Open the delete-confirmation dialog for this session (destructive). */
+  onDelete: (id: SessionNode['id'], currentTitle: string) => void
+  t: RowTranslate
+}) {
+  const title = displayTitle(node, t)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const statuses = sessionStatuses(node, t)
+  const primaryStatus = statuses[0]
+  const showStatus = primaryStatus.state !== 'done' || node.completed
+  return (
+    <div
+      className={clsx(css.sessionRow, menuOpen && css.menuOpen)}
+      role="treeitem"
+      aria-selected="false"
+      onClick={() => { onRestore(node.id) }}
+    >
+      {showStatus && (
+        <span className={css.slot}>
+          <SessionStatusDots statuses={statuses} />
+        </span>
+      )}
+      <span className={css.title}>{title}</span>
+      <span className={css.time}>{timeLabel(node.updatedAt, now, t)}</span>
+      <span className={css.rowActions}>
+        <Menu
+          open={menuOpen}
+          onClose={() => { setMenuOpen(false) }}
+          items={[
+            { id: 'unarchive', label: t('menu.unarchiveSession'), icon: <IconArchiveOutline20 size={16} /> },
+            { id: 'delete', label: t('menu.deleteSession'), icon: <IconTrashOutline16 />, danger: true },
+          ]}
+          onSelect={(id) => {
+            setMenuOpen(false)
+            // Unknown ids leave before the dispatch: a future menu row must
+            // not inherit the destructive branch as an else fallback.
+            if (id !== 'unarchive' && id !== 'delete') return
+            if (id === 'unarchive') onUnarchive(node.id)
+            else onDelete(node.id, node.title)
+          }}
+          portal
+          closeOnPointerLeave
+          anchor={(
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('actions.session.aria', { name: title })}
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+            >
+              <IconEllipsisOutline16 />
+            </button>
+          )}
+        />
+      </span>
+    </div>
   )
 }

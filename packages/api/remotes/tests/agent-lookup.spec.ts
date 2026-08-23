@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { createApiRemoteAgentResolver } from '@deepseek-ai/dsh-api-remotes'
@@ -72,6 +72,33 @@ describe('API Remote Agent resolver races', () => {
 
     expect(result).toMatchObject({ agent: { id: sessionId } })
     expect(resume).toHaveBeenCalledWith({ resumeSessionId: sessionId })
+    await ctx.fiber.dispose()
+  })
+
+  it('hands every cold-resume handle to the retain sink', async () => {
+    const ctx = await createContext()
+    const sessionId = sid('retain-cold-resume')
+    const meta = header(sessionId)
+    let published: Session | undefined
+    provideSession(ctx, meta, () => {
+      published = ctx.sessions.create(sessionId, { meta: { cwd: '/proj' } })
+      return Promise.resolve({ meta, events: [] })
+    })
+    vi.spyOn(ctx.agents, 'resume').mockImplementation(async () => {
+      if (published === undefined) throw new Error('Session was not published')
+      return { agent: stubAgent(ctx, published), dispose: () => Promise.resolve() }
+    })
+    const retained: Array<{ id: SessionId; handle: AgentHandle }> = []
+    const retain = vi.fn((id: SessionId, handle: AgentHandle) => {
+      retained.push({ id, handle })
+    })
+
+    const result = await createApiRemoteAgentResolver(ctx, { retain })(sessionId)
+
+    expect(result).toMatchObject({ agent: { id: sessionId } })
+    expect(retain).toHaveBeenCalledOnce()
+    expect(retained[0]?.id).toBe(sessionId)
+    expect(retained[0]?.handle).toMatchObject({ agent: { id: sessionId }, dispose: expect.any(Function) })
     await ctx.fiber.dispose()
   })
 

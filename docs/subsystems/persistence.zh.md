@@ -367,6 +367,18 @@ abstract readFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise
 abstract list(signal?: AbortSignal): Promise<SessionHeader[]>
 
 /**
+ * Permanently remove one session's stored log and every backend artifact.
+ * A live session refuses (`cannot delete ... while it is live`) — dispose
+ * the owning Agent first; a draining disposal is awaited before the medium
+ * write. Unknown ids resolve to `false`. After resolution the id is unknown
+ * to {@link list}, {@link load}, and resume, and cannot be resurrected.
+ * @param id - persisted session whose log is removed.
+ * @param signal - optional cancellation for backend removal work.
+ * @returns whether a durable artifact existed and was removed.
+ */
+abstract delete(id: SessionId, signal?: AbortSignal): Promise<boolean>
+
+/**
  * List materialized sessions with cheap per-log change tokens.
  *
  * Repeated observations of an unchanged log return the same revision. A

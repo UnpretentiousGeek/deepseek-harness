@@ -232,9 +232,9 @@ function sessionNode(
  *
  * Every group shows; sessions populate under expanded groups in the selected
  * local order. Blank sessions are excluded except for the selected
- * provisional New Session row; archived sessions are excluded everywhere.
- * Content search lives outside this derivation
- * (see {@link deriveSearchResults}).
+ * provisional New Session row; archived sessions are excluded here (the
+ * trailing Archived section derives them separately). Content search lives
+ * outside this derivation (see {@link deriveSearchResults}).
  * @param list - sessions list snapshot (`current` feeds containsCurrent).
  * @param workspaces - real workspaces in stable Host order.
  * @param archivedSessionIds - registry-global archive set.
@@ -291,6 +291,30 @@ export function deriveFlat(
   for (const id of list.ids) {
     const s = list.byId[id]
     if (s === undefined || !sessionVisible(s, list.current, archived)) continue
+    rows.push(s)
+  }
+  rows.sort(byRecency)
+  return rows.map(session => sessionNode(session, descendants))
+}
+
+/**
+ * Derive the trailing Archived section: every archived session that still has
+ * list metadata, newest first. Blank placeholders are excluded — they are
+ * provisional rows no grouping surface can restore meaningfully, and New
+ * Session mints a fresh one instead of reusing an archived blank.
+ * @param list - sessions list snapshot (metadata authority).
+ * @param archivedSessionIds - registry-global archive set.
+ * @returns archived rows in render order.
+ */
+export function deriveArchived(
+  list: SessionListState,
+  archivedSessionIds: readonly SessionId[],
+): SessionNode[] {
+  const descendants = indexSubagentDescendants(list.byId)
+  const rows: SessionSummary[] = []
+  for (const id of archivedSessionIds) {
+    const s = list.byId[id]
+    if (s === undefined || s.origin === 'subagent' || s.blank) continue
     rows.push(s)
   }
   rows.sort(byRecency)

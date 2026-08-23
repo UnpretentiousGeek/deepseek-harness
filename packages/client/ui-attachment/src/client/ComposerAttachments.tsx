@@ -108,7 +108,7 @@ export function ComposerAttachments({
       )}
       {preview !== null && (
         <ImageLightbox
-          src={preview.previewUrl ?? ""}
+          src={preview.previewUrl ?? ''}
           alt={preview.file.name || t('image.original')}
           labels={lightboxLabels(t)}
           onClose={closePreview}

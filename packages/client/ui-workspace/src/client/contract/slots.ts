@@ -130,6 +130,17 @@ export type WorkspaceBrowserInjected = {
    */
   archiveSession: (sessionId: SessionId) => Promise<void>
   /**
+   * Remove a Session from the registry-global set, restoring it to every
+   * grouping surface at its retained accounting position. Idempotent for a
+   * non-archived id.
+   */
+  unarchiveSession: (sessionId: SessionId) => Promise<void>
+  /**
+   * Permanently delete a Session: stored log, accounting slot, and
+   * archive-set entry. There is no undo; callers confirm before invoking.
+   */
+  deleteSession: (sessionId: SessionId) => Promise<void>
+  /**
    * Reorder a session inside its Workspace account (DOM-insertBefore
    * semantics: omitted anchor appends to the end). The view refreshes from
    * the Host response/changed frame; failures leave the order unchanged.

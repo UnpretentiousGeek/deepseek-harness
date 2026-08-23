@@ -302,6 +302,33 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     expect(scanned.events.map(event => event.type)).toEqual(oneTurnLog().map(event => event.type))
   })
 
+  it('delete removes the session directory durably and resolves false for unknown ids', async () => {
+    const removals: SessionId[] = []
+    ctx.on('session/persistence-removed', (id: SessionId) => { removals.push(id) })
+    const m = meta('delete-me', '/work')
+    await ctx.sessionPersistence.create(m)
+    await ctx.sessionPersistence.append(m.id, oneTurnLog())
+
+    // A live session refuses; the artifact stays untouched.
+    const sessionFiber = await ctx.plugin(Object.assign(async (inner: Context) => {
+      const live = inner.sessions.create(m.id, { seed: oneTurnLog(), meta: m })
+      await inner.sessions.flush(live)
+    }, { inject: ['sessions'] }))
+    expect(ctx.sessions.get(m.id)).toBeDefined()
+    await expect(ctx.sessionPersistence.delete(m.id)).rejects.toThrow(/while it is live/)
+    expect((await stat(sessionDir(root, '/work', m.id))).isDirectory()).toBe(true)
+
+    await sessionFiber.dispose()
+    await vi.waitFor(() => { expect(ctx.sessions.list()).toHaveLength(0) })
+
+    await expect(ctx.sessionPersistence.delete(m.id)).resolves.toBe(true)
+    await expect(stat(sessionDir(root, '/work', m.id))).rejects.toThrow()
+    expect((await ctx.sessionPersistence.list()).map(h => h.id)).not.toContain(m.id)
+    expect(await ctx.sessionPersistence.readRaw(m.id)).toBeUndefined()
+    expect(await ctx.sessionPersistence.delete(SessionId('delete-ghost'))).toBe(false)
+    expect(removals).toEqual([m.id])
+  })
+
   it('readRaw is undefined for an absent session', async () => {
     const m = meta('raw-missing', '/work')
     expect(await ctx.sessionPersistence.readRaw(m.id)).toBeUndefined()

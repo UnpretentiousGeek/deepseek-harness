@@ -255,6 +255,53 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
+   * Remove one session from the registry-global archive set, restoring its
+   * grouping-surface visibility at its retained accounting position. The
+   * remaining ids keep their archive order. Idempotent for an id not
+   * currently archived, and no existence validation: membership alone
+   * authorizes removal, so stray ids stay removable.
+   * @param sessionId - The session to unarchive.
+   * @returns resolution after durability.
+   */
+  unarchiveSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.archivedSessionIds.includes(sessionId)) return
+      // The chain slot serializes against every other registry write, so this
+      // check-then-write pair cannot interleave with another archive change.
+      await this.setState({
+        ...state,
+        archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      })
+    })
+  }
+
+  /**
+   * Purge one deleted session from every workspace fact: its accounting slot
+   * in each owning workspace record and its archive-set entry. Idempotent for
+   * an id no record references — deletion of a never-accounted session is a
+   * pure archive-set concern, and both writes are skipped when nothing
+   * matches.
+   * @param sessionId - The deleted session to purge.
+   * @returns resolution after durability.
+   */
+  forgetSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      for (const entity of [...this.entities.values()]) {
+        if (!entity.sessionIds.includes(sessionId)) continue
+        await entity.detachSession(sessionId)
+      }
+      if (state.archivedSessionIds.includes(sessionId)) {
+        await this.setState({
+          ...this.requireState(),
+          archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+        })
+      }
+    })
+  }
+
+  /**
    * Whether a session is live, header-indexed, or present in a fresh
    * persistence listing. Only a definite miss returns false — a failing
    * `sessionPersistence.list()` propagates so storage faults never

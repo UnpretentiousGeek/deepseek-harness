@@ -2378,6 +2378,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'resolution after durability.',
       },
       {
+        signature: 'forgetSession(sessionId: SessionId): Promise<void>',
+        description: 'Purge one deleted session from every workspace fact: its accounting slot in each owning workspace record and its archive-set entry. Idempotent for an id no record references — deletion of a never-accounted session is a pure archive-set concern, and both writes are skipped when nothing matches.',
+        parameters: [{ name: 'sessionId', description: 'The deleted session to purge.' }],
+        returns: 'resolution after durability.',
+      },
+      {
         signature: 'async resolveByPath(path: string): Promise<Workspace | undefined>',
         description: 'Resolve by canonical directory path without creating or mutating a workspace. A missing path rejects during `realpath`; an existing unowned directory returns `undefined`.',
         parameters: [{ name: 'path', description: 'Existing directory path in any spelling.' }],

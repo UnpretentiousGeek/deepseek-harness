@@ -59,7 +59,12 @@ interface ImageAttachmentLimits {
 本地后端每条消息最多准入 20 张图片，源图编码数据总量不超过 200 MiB。单张源图不得超过 20 MiB、64,000,000 像素和单边 8192 像素。这些源文件限制先于独立的规范化阶段执行；该阶段默认把长边限制为 2048 像素，把编码数据限制为 4 MiB。
 
 ```ts type-equiv
-/** Document formats accepted by the text-extraction path. */
+/**
+ * Document formats accepted by the text-extraction path. Text-like formats
+ * decode directly; the three binary formats have dedicated extractors. Legacy
+ * binary formats without a maintained extractor (`.doc`, `.xls`, `.ppt`) are
+ * deliberately absent — admission refuses them by name instead of guessing.
+ */
 type DocumentMediaType =
   | 'text/plain'
   | 'text/markdown'
@@ -73,9 +78,13 @@ type DocumentMediaType =
 ```ts type-equiv
 /** Deployment-resolved limits used by document upload admission. */
 interface DocumentAttachmentLimits {
+  /** Maximum encoded source bytes for one document. */
   maxDocumentBytes: number
+  /** Maximum documents in one submitted message. */
   maxDocumentsPerMessage: number
+  /** Maximum aggregate encoded document bytes in one submitted message. */
   maxMessageDocumentBytes: number
+  /** Maximum extracted characters per document before truncation marks it. */
   maxExtractedChars: number
   mediaTypes: readonly DocumentMediaType[]
 }
@@ -85,7 +94,9 @@ interface DocumentAttachmentLimits {
 /** Request to validate and extract text from one uploaded document. */
 interface SubmitDocumentAttachment {
   data: Uint8Array
+  /** Caller-declared media type, checked against the bytes by the extractor. */
   mediaType: DocumentMediaType
+  /** Optional browser/provider display name; it is never interpreted as a path. */
   name?: string
 }
 ```
@@ -94,7 +105,9 @@ interface SubmitDocumentAttachment {
 /** Extracted text projection of one admitted document, in input order. */
 interface ExtractedDocument {
   mediaType: DocumentMediaType
+  /** Optional display name carried through to the model-visible envelope. */
   name?: string
+  /** Extracted UTF-8 text, truncated at the configured character cap. */
   text: string
 }
 ```

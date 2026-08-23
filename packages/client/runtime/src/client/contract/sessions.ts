@@ -86,6 +86,12 @@ export interface ISessions {
   /** Clear the current selection into the no-session view state. */
   clear(): void
   /**
+   * Permanently delete a session on the host (stored log, accounting slot,
+   * archive-set entry). There is no undo; the removal frame drops every row.
+   * @param sessionId - session to delete.
+   */
+  delete(sessionId: SessionId): Promise<void>
+  /**
    * Search the Host's visible message-content index. Results stay
    * request-local; the list snapshot remains the metadata authority.
    * @param query - non-blank literal phrase.
