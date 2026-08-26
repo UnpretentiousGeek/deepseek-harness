@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveOutline20, IconCloseFill14, IconPersonalizationOutline16,
-  IconProjectAddOutline16, IconSearchOutline16, Menu, Modal, Tooltip,
+  IconProjectAddOutline16, IconSearchOutline16, IconTriangleRightFill14, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
@@ -235,6 +235,10 @@ type SessionTreeProps = Pick<
   setSessionOrder: (accountKey: string, order: string[]) => void
   /** Registry-global archive set (hidden rows). */
   archivedSessionIds: readonly SessionNode['id'][]
+  /** Persisted fold state of the trailing Archived section. */
+  archivedExpanded: boolean
+  /** Toggle the persisted Archived-section fold state. */
+  onToggleArchived: () => void
   /** Open the browser-owned rename dialog for a real Workspace group. */
   onRenameRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
   /** Open the browser-owned delete-confirmation dialog for a real Workspace group. */
@@ -255,13 +259,18 @@ type SessionTreeProps = Pick<
 
 /**
  * The trailing "Archived" section shared by the grouped tree and the flat
- * list: a muted non-interactive header plus one row per archived session.
- * Absent entirely while the archive set is empty, so the default surface is
- * unchanged. Archived rows stay outside the drag/order machinery — restoring,
- * not reordering, is the section's single verb.
+ * list: a muted disclosure header plus one row per archived session. The
+ * header toggles the persisted fold state like a Workspace folder row (the
+ * chevron replaces the archive glyph on hover); rows render only while
+ * expanded. Absent entirely while the archive set is empty, so the default
+ * surface is unchanged. Archived rows stay outside the drag/order machinery —
+ * restoring, not reordering, is the section's single verb.
  */
-function ArchivedSection({ nodes, onRestore, onUnarchive, onDelete, t }: {
+function ArchivedSection({ nodes, expanded, onToggle, onRestore, onUnarchive, onDelete, t }: {
   nodes: readonly SessionNode[]
+  /** Persisted fold state; rows render only while true. */
+  expanded: boolean
+  onToggle: () => void
   onRestore: (id: SessionNode['id']) => void
   onUnarchive: (id: SessionNode['id']) => void
   onDelete: (id: SessionNode['id'], currentTitle: string) => void
@@ -271,12 +280,20 @@ function ArchivedSection({ nodes, onRestore, onUnarchive, onDelete, t }: {
   const now = Date.now()
   return (
     <div className={css.archivedSection}>
-      <div className={css.archivedHeader}>
+      <button
+        type="button"
+        className={css.archivedHeader}
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
         <span className={css.archivedIcon}><IconArchiveOutline20 size={16} /></span>
+        <span className={css.archivedChevron}>
+          <IconTriangleRightFill14 className={clsx(css.archivedArrow, expanded && css.archivedArrowOpen)} />
+        </span>
         <span className={css.archivedTitle}>{t('archived.label')}</span>
         <span className={css.archivedCount}>{nodes.length}</span>
-      </div>
-      {nodes.map(node => (
+      </button>
+      {expanded && nodes.map(node => (
         <ArchivedSessionItem
           key={node.id}
           node={node}
@@ -294,6 +311,7 @@ function ArchivedSection({ nodes, onRestore, onUnarchive, onDelete, t }: {
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 function SessionTree({
   useSessions, startSession, open, forkSession, workspaces, archivedSessionIds,
+  archivedExpanded, onToggleArchived,
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
   onSessionUnarchive, onSessionRestore, onSessionDelete,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
@@ -591,6 +609,8 @@ function SessionTree({
         })}
         <ArchivedSection
           nodes={archivedNodes}
+          expanded={archivedExpanded}
+          onToggle={onToggleArchived}
           onRestore={onSessionRestore}
           onUnarchive={onSessionUnarchive}
           onDelete={onSessionDelete}
@@ -606,6 +626,7 @@ function SessionTree({
 function FlatList({
   useSessions, open, forkSession, onSessionRename, onSessionArchive,
   onSessionUnarchive, onSessionRestore, onSessionDelete, archivedSessionIds,
+  archivedExpanded, onToggleArchived,
   orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
 }: Pick<
   SessionTreeProps,
@@ -618,6 +639,8 @@ function FlatList({
   | 'onSessionRestore'
   | 'onSessionDelete'
   | 'archivedSessionIds'
+  | 'archivedExpanded'
+  | 'onToggleArchived'
   | 'orderBy'
   | 'sessionOrderByAccount'
   | 'sessionUpdatedAtByAccount'
@@ -727,6 +750,8 @@ function FlatList({
         })}
         <ArchivedSection
           nodes={archivedNodes}
+          expanded={archivedExpanded}
+          onToggle={onToggleArchived}
           onRestore={onSessionRestore}
           onUnarchive={onSessionUnarchive}
           onDelete={onSessionDelete}
@@ -850,6 +875,7 @@ export function WorkspaceBrowser({
   const groupBy = useStore(s => s.groupBy)
   const orderBy = useStore(s => s.orderBy)
   const groupExpansion = useStore(s => s.groupExpansion)
+  const archivedExpanded = useStore(s => s.archivedExpanded)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
   const sessionUpdatedAtByAccount = useStore(s => s.sessionUpdatedAtByAccount)
   const currentBlankSessionId = useSessions((state) => {
@@ -1282,6 +1308,8 @@ export function WorkspaceBrowser({
                 onSessionUnarchive={onSessionUnarchive} onSessionRestore={onSessionRestore}
                 onSessionDelete={onSessionDelete}
                 archivedSessionIds={archivedSessionIds}
+                archivedExpanded={archivedExpanded}
+                onToggleArchived={() => { actions.setArchivedExpanded(!archivedExpanded) }}
                 orderBy={orderBy}
                 sessionOrderByAccount={sessionOrderByAccount}
                 sessionUpdatedAtByAccount={sessionUpdatedAtByAccount}
@@ -1307,6 +1335,8 @@ export function WorkspaceBrowser({
                 syncSessionOrderAccount={actions.syncSessionOrderAccount}
                 setSessionOrder={actions.setSessionOrder}
                 archivedSessionIds={archivedSessionIds}
+                archivedExpanded={archivedExpanded}
+                onToggleArchived={() => { actions.setArchivedExpanded(!archivedExpanded) }}
                 startSession={startSession}
                 open={open}
                 insertWorkspaceBefore={insertWorkspaceBefore}

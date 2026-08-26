@@ -406,6 +406,43 @@ describe('WorkspaceBrowser', () => {
     expect(open).not.toHaveBeenCalled()
   })
 
+  it('folds the Archived section from its header and shares the fold across modes and remounts', () => {
+    const b = mount({
+      useSessions: hook(sessionState([summary('gone-s', 1), summary('kept-s', 2)])),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['kept-s'])], [sid('gone-s')])),
+    })
+    // Expanded by default: the disclosure header reports its state and the row is visible.
+    const header = screen.getByText('归档').closest('button')!
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('gone-s')).toBeTruthy()
+
+    // Folding hides only the archived rows; the header and its count stay.
+    fireEvent.click(header)
+    expect(screen.getByText('归档').closest('button')!.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('gone-s')).toBeNull()
+    expect(b.store.getSnapshot().archivedExpanded).toBe(false)
+
+    // The fold survives a full unmount/remount through the persisted view store.
+    b.view.unmount()
+    const restored = mount({
+      useSessions: hook(sessionState([summary('gone-s', 1)])),
+      useWorkspaces: hook(workspaceState([], [sid('gone-s')])),
+    })
+    expect(restored.store.getSnapshot().archivedExpanded).toBe(false)
+    expect(screen.queryByText('gone-s')).toBeNull()
+
+    // Re-expanding restores the rows, and the flat list shares one fold state:
+    // collapsing there keeps them hidden too.
+    fireEvent.click(screen.getByText('归档'))
+    expect(screen.getByText('gone-s')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
+    expect(screen.getByText('gone-s')).toBeTruthy()
+    fireEvent.click(screen.getByText('归档'))
+    expect(restored.store.getSnapshot().archivedExpanded).toBe(false)
+    expect(screen.queryByText('gone-s')).toBeNull()
+  })
+
   it('logs and keeps the archived row when the unarchive call rejects', async () => {
     const rejection = new Error('unarchive exploded')
     const unarchiveSession = vi.fn(async () => { throw rejection })

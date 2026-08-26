@@ -378,8 +378,9 @@
   margin-top: 4px;
 }
 
-/* Trailing Archived section: a muted, non-interactive header row above the
-   archived session rows. Present only while the archive set is non-empty. */
+/* Trailing Archived section: a muted disclosure header above the archived
+   session rows, folded like a Workspace folder row. Present only while the
+   archive set is non-empty; rows render only while expanded. */
 .archivedSection {
   margin-top: 8px;
 }
@@ -388,15 +389,58 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   height: 28px;
+  border: none;
+  border-radius: 8px;
   padding: 0 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
   color: var(--dsw-alias-label-tertiary);
   user-select: none;
 }
 
+.archivedHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.archivedHeader:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-tertiary);
+  outline-offset: -2px;
+}
+
 .archivedIcon {
+  flex: none;
   display: inline-flex;
   align-items: center;
+}
+
+/* Disclosure arrow replaces the archive glyph on hover/focus, mirroring the
+   Workspace folder row's folder->chevron swap; open rotates it downward. */
+.archivedChevron {
+  flex: none;
+  display: none;
+  align-items: center;
+  color: var(--dsw-alias-label-caption);
+}
+
+.archivedHeader:hover .archivedChevron,
+.archivedHeader:focus-visible .archivedChevron {
+  display: inline-flex;
+}
+
+.archivedHeader:hover .archivedIcon,
+.archivedHeader:focus-visible .archivedIcon {
+  display: none;
+}
+
+.archivedArrow {
+  transition: transform 150ms var(--ds-ease-in-out);
+}
+
+.archivedArrowOpen {
+  transform: rotate(90deg);
 }
 
 .archivedTitle {
@@ -532,7 +576,8 @@
   .sectionLabel,
   .searchSlot,
   .searchInput,
-  .headerActions {
+  .headerActions,
+  .archivedArrow {
     transition: none;
   }
 }
